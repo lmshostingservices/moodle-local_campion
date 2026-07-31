@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<XMLDB PATH="local/campion/db" VERSION="20260707" COMMENT="XMLDB file for local_campion"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:noNamespaceSchemaLocation="../../../lib/xmldb/xmldb.xsd">
+  <TABLES>
+
+    <TABLE NAME="local_campion_users" COMMENT="Campion-provisioned user accounts mapped to Moodle users">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="moodleuserid" TYPE="int" LENGTH="10" NOTNULL="false" COMMENT="Moodle user id — null if no matching Moodle account yet"/>
+        <FIELD NAME="email" TYPE="char" LENGTH="255" NOTNULL="true"/>
+        <FIELD NAME="firstname" TYPE="char" LENGTH="100" NOTNULL="true"/>
+        <FIELD NAME="lastname" TYPE="char" LENGTH="100" NOTNULL="true"/>
+        <FIELD NAME="school" TYPE="char" LENGTH="255" NOTNULL="true"/>
+        <FIELD NAME="yearlevel" TYPE="char" LENGTH="20" NOTNULL="true"/>
+        <FIELD NAME="role" TYPE="char" LENGTH="20" NOTNULL="true" DEFAULT="student" COMMENT="student or teacher"/>
+        <FIELD NAME="campionid" TYPE="char" LENGTH="100" NOTNULL="false" COMMENT="Campion-side user identifier if returned"/>
+        <FIELD NAME="sso_only" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="0" COMMENT="1 = SSO-only user, cannot set local password"/>
+        <FIELD NAME="lastssologin" TYPE="int" LENGTH="10" NOTNULL="false" COMMENT="Unix timestamp of last successful SSO login"/>
+        <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
+        <FIELD NAME="timemodified" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+        <KEY NAME="email_unique" TYPE="unique" FIELDS="email"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="moodleuserid" UNIQUE="false" FIELDS="moodleuserid"/>
+      </INDEXES>
+    </TABLE>
+
+    <TABLE NAME="local_campion_subscriptions" COMMENT="Per-user Campion resource subscriptions">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="campionuserid" TYPE="int" LENGTH="10" NOTNULL="true" COMMENT="FK to local_campion_users.id"/>
+        <FIELD NAME="isbn" TYPE="char" LENGTH="50" NOTNULL="true"/>
+        <FIELD NAME="productname" TYPE="char" LENGTH="255" NOTNULL="true"/>
+        <FIELD NAME="subscriptionperiod" TYPE="char" LENGTH="100" NOTNULL="true"/>
+        <FIELD NAME="status" TYPE="char" LENGTH="20" NOTNULL="true" DEFAULT="active" COMMENT="active or inactive"/>
+        <FIELD NAME="chargeable" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="1" COMMENT="0 = free (print+digital), 1 = chargeable"/>
+        <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
+        <FIELD NAME="timemodified" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="campionuserid" UNIQUE="false" FIELDS="campionuserid"/>
+        <INDEX NAME="isbn" UNIQUE="false" FIELDS="isbn"/>
+        <INDEX NAME="user_isbn" UNIQUE="false" FIELDS="campionuserid,isbn"/>
+      </INDEXES>
+    </TABLE>
+
+    <TABLE NAME="local_campion_products" COMMENT="Campion product catalogue (ISBNs)">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="isbn" TYPE="char" LENGTH="50" NOTNULL="true"/>
+        <FIELD NAME="productname" TYPE="char" LENGTH="255" NOTNULL="true"/>
+        <FIELD NAME="status" TYPE="char" LENGTH="20" NOTNULL="true" DEFAULT="active" COMMENT="active or deactivated"/>
+        <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
+        <FIELD NAME="timemodified" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+        <KEY NAME="isbn_unique" TYPE="unique" FIELDS="isbn"/>
+      </KEYS>
+    </TABLE>
+
+    <TABLE NAME="local_campion_jwt_nonces" COMMENT="Used JWT nonces for replay prevention (5-minute window)">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="jti" TYPE="char" LENGTH="255" NOTNULL="true" COMMENT="JWT ID (jti claim) or hash of the token"/>
+        <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+        <KEY NAME="jti_unique" TYPE="unique" FIELDS="jti"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="timecreated" UNIQUE="false" FIELDS="timecreated"/>
+      </INDEXES>
+    </TABLE>
+
+    <TABLE NAME="local_campion_logs" COMMENT="Audit log for SSO and provisioning events">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="userid" TYPE="int" LENGTH="10" NOTNULL="false" COMMENT="Moodle user id if known"/>
+        <FIELD NAME="email" TYPE="char" LENGTH="255" NOTNULL="false"/>
+        <FIELD NAME="event" TYPE="char" LENGTH="60" NOTNULL="true" COMMENT="e.g. sso_login, create_user, create_subscription"/>
+        <FIELD NAME="detail" TYPE="text" NOTNULL="false"/>
+        <FIELD NAME="ip" TYPE="char" LENGTH="45" NOTNULL="false"/>
+        <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="userid" UNIQUE="false" FIELDS="userid"/>
+        <INDEX NAME="timecreated" UNIQUE="false" FIELDS="timecreated"/>
+      </INDEXES>
+    </TABLE>
+
+  </TABLES>
+</XMLDB>
