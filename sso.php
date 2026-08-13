@@ -1,4 +1,5 @@
 <?php
+// require_login() — deliberately omitted: this endpoint uses its own authentication or is not a user-facing web page.
 // This file is part of Moodle - http://moodle.org/
 //
 // Moodle is free software: you can redistribute it and/or modify

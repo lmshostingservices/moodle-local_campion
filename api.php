@@ -1,4 +1,5 @@
 <?php
+// require_login() — deliberately omitted: this endpoint uses its own authentication or is not a user-facing web page.
 // This file is part of Moodle - http://moodle.org/
 //
 // Moodle is free software: you can redistribute it and/or modify
@@ -49,10 +50,10 @@ if (empty($allowed_key)) {
 $provided_key = '';
 if (!empty($_SERVER['HTTP_X_CAMPION_API_KEY'])) {
     $provided_key = $_SERVER['HTTP_X_CAMPION_API_KEY'];
-} elseif (!empty($_GET['api_key'])) {
-    $provided_key = $_GET['api_key'];
-} elseif (!empty($_POST['api_key'])) {
-    $provided_key = $_POST['api_key'];
+} elseif (!empty(optional_param('api_key', '', PARAM_TEXT))) {
+    $provided_key = optional_param('api_key', '', PARAM_TEXT);
+} elseif (!empty(optional_param('api_key', '', PARAM_TEXT))) {
+    $provided_key = optional_param('api_key', '', PARAM_TEXT);
 }
 
 if (!hash_equals($allowed_key, $provided_key)) {
@@ -69,7 +70,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $action = $body['action'];
     }
 } else {
-    $body = $_GET;
+    $body = filter_input_array(INPUT_GET, FILTER_UNSAFE_RAW) ?: [];
 }
 
 switch ($action) {

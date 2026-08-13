@@ -25,8 +25,8 @@
 defined('MOODLE_INTERNAL') || die();
 
 $plugin->component = 'local_campion';
-$plugin->version   = 2026072300222;
-$plugin->release   = '1.0.4'; // FIX-XMLDB-DEFAULT (v1.0.1): Removed empty-string DEFAULT from NOTNULL CHAR fields in install.xml (firstname, lastname, school, yearlevel, productname, subscriptionperiod). Fixes XMLDB debugging warnings on Moodle sites running local_adminer.
+$plugin->version   = 2026072300;
+$plugin->release   = '1.0.5'; // FIX-XMLDB-DEFAULT (v1.0.1): Removed empty-string DEFAULT from NOTNULL CHAR fields in install.xml (firstname, lastname, school, yearlevel, productname, subscriptionperiod). Fixes XMLDB debugging warnings on Moodle sites running local_adminer.
 $plugin->requires  = 2022041900; // Moodle 4.0+
 $plugin->supported = [400, 500]; // Moodle 4.0 to 5.x
 $plugin->maturity  = MATURITY_STABLE;
