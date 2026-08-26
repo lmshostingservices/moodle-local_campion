@@ -34,14 +34,19 @@ if (!local_campion_check_unlock()) {
     throw new moodle_exception('notunlocked', 'local_campion');
 }
 
-// CSRF state token — stored in session for verification in sso.php callback.
+// CSRF state token — stored in the Moodle session for verification in the sso.php callback.
+global $SESSION;
 $state = bin2hex(random_bytes(16));
-$_SESSION['campion_oauth_state'] = $state;
+$SESSION->campion_oauth_state = $state;
 
 $redirect_uri = $CFG->wwwroot . '/local/campion/sso.php';
 $auth_url     = local_campion_build_auth_url($USER->email, $state, $redirect_uri);
 
-local_campion_log('sso_launch', 'Publisher-initiated SSO — redirecting to Campion IAM',
-    $USER->email, $USER->id);
+local_campion_log(
+    'sso_launch',
+    'Publisher-initiated SSO — redirecting to Campion IAM',
+    $USER->email,
+    $USER->id
+);
 
 redirect($auth_url);

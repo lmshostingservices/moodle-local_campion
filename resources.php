@@ -39,7 +39,8 @@ $campion_user = $DB->get_record('local_campion_users', ['email' => strtolower($U
 
 $subscriptions = [];
 if ($campion_user) {
-    $subscriptions = $DB->get_records('local_campion_subscriptions',
+    $subscriptions = $DB->get_records(
+        'local_campion_subscriptions',
         ['campionuserid' => $campion_user->id, 'status' => 'active'],
         'timecreated DESC'
     );

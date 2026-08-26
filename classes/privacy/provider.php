@@ -35,6 +35,7 @@ class provider implements
             'firstname' => 'privacy:metadata:local_campion_users:firstname',
             'lastname'  => 'privacy:metadata:local_campion_users:lastname',
             'school'    => 'privacy:metadata:local_campion_users:school',
+            'acaraid'   => 'privacy:metadata:local_campion_users:acaraid',
             'yearlevel' => 'privacy:metadata:local_campion_users:yearlevel',
             'role'      => 'privacy:metadata:local_campion_users:role',
         ], 'privacy:metadata:local_campion_users');
@@ -84,6 +85,7 @@ class provider implements
                 'firstname' => $cu->firstname,
                 'lastname'  => $cu->lastname,
                 'school'    => $cu->school,
+                'acaraid'   => $cu->acaraid ?? null,
                 'yearlevel' => $cu->yearlevel,
                 'role'      => $cu->role,
             ]

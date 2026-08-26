@@ -246,6 +246,7 @@ function local_campion_get_or_create_campion_user($email, array $data = []) {
             'firstname'   => $data['firstname'] ?? '',
             'lastname'    => $data['lastname']  ?? '',
             'school'      => $data['school']    ?? '',
+            'acaraid'     => $data['acaraid']   ?? (local_campion_get_acara_id() ?: null),
             'yearlevel'   => $data['yearlevel'] ?? '',
             'role'        => $data['role']      ?? 'student',
             'campionid'   => $data['campionid'] ?? null,
@@ -257,6 +258,29 @@ function local_campion_get_or_create_campion_user($email, array $data = []) {
     }
 
     return $record;
+}
+
+/**
+ * Find a Campion user record, optionally scoped to a single campus.
+ *
+ * Campuses of the same school routinely share a name, so where an ACARA ID is supplied it is
+ * the authoritative discriminator and the school name is ignored.
+ *
+ * @param  string      $email
+ * @param  string|null $acaraid  ACARA ID to scope the lookup to, or null for any campus
+ * @return object|null
+ */
+function local_campion_find_campion_user($email, $acaraid = null) {
+    global $DB;
+
+    $email  = strtolower(trim($email));
+    $params = ['email' => $email];
+
+    if ($acaraid !== null && trim((string)$acaraid) !== '') {
+        $params['acaraid'] = trim((string)$acaraid);
+    }
+
+    return $DB->get_record('local_campion_users', $params) ?: null;
 }
 
 /**

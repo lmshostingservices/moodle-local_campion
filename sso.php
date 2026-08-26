@@ -46,15 +46,31 @@ if (!local_campion_is_enabled()) {
 $jwt = null;
 
 // Path A: direct token in query string (IAM-initiated, Option 1 simple)
-$raw_token = optional_param('token', '', PARAM_RAW);
+$raw_token = optional_param('token', '', PARAM_RAW); // pipeline-ignore: PARAM_RAW — JWT contains '.' separators that PARAM_ALPHANUMEXT would strip; the token is HMAC-verified in local_campion_validate_jwt() before any use and is never rendered.
 if (!empty($raw_token)) {
     $jwt = $raw_token;
 }
 
 // Path B: OAuth 2.0 authorisation code flow
-$code  = optional_param('code', '', PARAM_RAW);
-$state = optional_param('state', '', PARAM_RAW);
+$code  = optional_param('code', '', PARAM_RAW); // pipeline-ignore: PARAM_RAW — Opaque OAuth 2.0 authorisation code of provider-defined format; POSTed straight back to Campion IAM over TLS and never rendered or stored.
+$state = optional_param('state', '', PARAM_ALPHANUMEXT);
 if (empty($jwt) && !empty($code)) {
+
+    // Verify the CSRF state token, but only for flows we initiated ourselves. A
+    // publisher-initiated launch (launch.php) stores a state value in the session and Campion
+    // echoes it back here; an IAM-initiated launch has no prior session state, so there is
+    // nothing to compare against and the JWT signature check is the sole authentication.
+    global $SESSION;
+    if (!empty($SESSION->campion_oauth_state)) {
+        $expectedstate = $SESSION->campion_oauth_state;
+        unset($SESSION->campion_oauth_state); // Single use, whether or not it matches.
+
+        if (!hash_equals($expectedstate, $state)) {
+            local_campion_log('sso_error', 'OAuth state mismatch — possible CSRF, login refused');
+            throw new moodle_exception('sso_state_mismatch', 'local_campion');
+        }
+    }
+
     $redirect_uri = $CFG->wwwroot . '/local/campion/sso.php';
     $token_data   = local_campion_exchange_code($code, $redirect_uri);
 
@@ -98,9 +114,12 @@ if (empty($email)) {
 if (isloggedin() && !isguestuser()) {
     if ($USER->email !== $email) {
         // Token is for a different user — sign out, then sign in as the new user.
-        local_campion_log('sso_user_switch',
+        local_campion_log(
+            'sso_user_switch',
             'Switching from ' . $USER->email . ' to ' . $email,
-            $email, $USER->id);
+            $email,
+            $USER->id
+        );
         require_logout();
     } else {
         // Token is for the same user — just redirect to the requested resource.

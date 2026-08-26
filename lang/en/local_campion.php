@@ -33,7 +33,8 @@ $string['api_key_desc']             = 'The API key Campion uses to authenticate 
 $string['enabled']                  = 'Enable Campion Integration';
 $string['enabled_desc']             = 'Globally enable or disable the Campion integration. Disabling this stops all SSO redirects and provisioning API calls.';
 $string['acara_id']                 = 'School ACARA ID';
-$string['acara_id_desc']            = 'Your school\'s ACARA ID (Australian Curriculum and Reporting Authority identifier). Used to match your school in the Campion platform.';
+$string['acara_id_desc']            = 'Default ACARA ID (Australian Curriculum and Reporting Authority identifier) for this site. Used only when a provisioning call does not supply its own <code>acaraId</code>. If you provision multiple campuses to this site, leave this blank and send <code>acaraId</code> with each user instead — campuses of the same school often share a name, and the ACARA ID is what tells them apart.';
+$string['col_acaraid']              = 'ACARA ID';
 $string['sso_endpoint']             = 'SSO Callback Endpoint';
 $string['sso_endpoint_desc']        = 'Share this URL with Campion as your OAuth 2.0 redirect URI for IAM-initiated SSO.';
 $string['provision_endpoint']       = 'Provisioning API Endpoint';
@@ -80,6 +81,7 @@ $string['sso_token_replayed']       = 'This authentication token has already bee
 $string['sso_no_email']             = 'No email address was provided in the Campion authentication token.';
 $string['sso_user_not_found']       = 'Your account was not found in this Moodle installation. Please contact your administrator.';
 $string['sso_login_error']          = 'An error occurred during Campion SSO login. Please try again.';
+$string['sso_state_mismatch']       = 'The login request could not be verified. Please return to Moodle and launch the resource again.';
 
 // Resources page.
 $string['resources']                = 'My Campion Resources';
@@ -101,6 +103,7 @@ $string['privacy:metadata:local_campion_users:email']                  = 'User e
 $string['privacy:metadata:local_campion_users:firstname']              = 'User first name.';
 $string['privacy:metadata:local_campion_users:lastname']               = 'User last name.';
 $string['privacy:metadata:local_campion_users:school']                 = 'School name.';
+$string['privacy:metadata:local_campion_users:acaraid']                = 'ACARA school/campus identifier.';
 $string['privacy:metadata:local_campion_users:yearlevel']              = 'Year level.';
 $string['privacy:metadata:local_campion_users:role']                   = 'Role (student/teacher).';
 $string['privacy:metadata:local_campion_subscriptions']                = 'Campion resource subscription records.';

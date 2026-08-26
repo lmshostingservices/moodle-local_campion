@@ -48,12 +48,12 @@ if (empty($allowed_key)) {
 }
 
 $provided_key = '';
-if (!empty($_SERVER['HTTP_X_CAMPION_API_KEY'])) {
-    $provided_key = $_SERVER['HTTP_X_CAMPION_API_KEY'];
-} elseif (!empty(optional_param('api_key', '', PARAM_TEXT))) {
-    $provided_key = optional_param('api_key', '', PARAM_TEXT);
-} elseif (!empty(optional_param('api_key', '', PARAM_TEXT))) {
-    $provided_key = optional_param('api_key', '', PARAM_TEXT);
+$headerkey = local_campion_api_request_header('HTTP_X_CAMPION_API_KEY');
+if ($headerkey !== '') {
+    // Trim: some HTTP clients (notably HTTPAPI on IBM i) leave trailing CR/space on headers.
+    $provided_key = trim($headerkey);
+} else {
+    $provided_key = trim(optional_param('api_key', '', PARAM_TEXT));
 }
 
 if (!hash_equals($allowed_key, $provided_key)) {
@@ -62,18 +62,59 @@ if (!hash_equals($allowed_key, $provided_key)) {
     exit;
 }
 
-// ── Route action ─────────────────────────────────────────────────
+// ── Parse request body ───────────────────────────────────────────
+// A request either carries a body (the documented POST transport) or it does not (a GET used
+// for a quick manual check). Keying off the body itself rather than the HTTP verb keeps the
+// branch honest — a POST with an empty body is handled exactly like a GET, which is what we
+// want — and removes any need to inspect the request method.
+$rawbody   = (string)file_get_contents('php://input');
+$jsonerror = null;
+$hasbody   = ($rawbody !== '');
+
 $action = optional_param('action', '', PARAM_ALPHANUMEXT);
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $body = @json_decode(file_get_contents('php://input'), true);
-    if (is_array($body) && isset($body['action'])) {
-        $action = $body['action'];
-    }
+
+if ($hasbody) {
+    $body = local_campion_api_parse_body($rawbody, $jsonerror);
 } else {
-    $body = filter_input_array(INPUT_GET, FILTER_UNSAFE_RAW) ?: [];
+    $body = local_campion_api_read_get_params();
 }
 
+if (!is_array($body)) {
+    $body = [];
+}
+
+// Body 'action' wins over the query-string one.
+$bodyaction = local_campion_api_field($body, 'action');
+if ($bodyaction !== null && $bodyaction !== '') {
+    $action = (string)$bodyaction;
+}
+
+// A request that carried a body we could not parse is a client-side error worth reporting
+// precisely, rather than falling through to a bare "Unknown action:" response.
+if ($hasbody && $action === '' && $jsonerror !== null) {
+    $declaredlength = local_campion_api_request_header('CONTENT_LENGTH');
+    http_response_code(400);
+    echo json_encode([
+        'success'            => false,
+        'error'              => 'Request body could not be parsed as JSON',
+        'json_error'         => $jsonerror,
+        'bytes_received'     => strlen($rawbody),
+        'content_length_hdr' => ($declaredlength === '') ? null : (int)$declaredlength,
+        'content_type_hdr'   => local_campion_api_request_header('CONTENT_TYPE') ?: null,
+        'hint'               => 'Check for smart/curly quotes, a UTF-8 BOM, or a Content-Length '
+                              . 'counting characters instead of bytes.',
+    ]);
+    exit;
+}
+
+// Accept any casing of the action name ("createuser", "CREATEUSER", ...).
+$action = local_campion_api_canonical_action($action);
+
 switch ($action) {
+
+    case 'Ping':
+        api_ping($body, $rawbody, $jsonerror);
+        break;
 
     case 'GetProduct':
         api_get_product($body);
@@ -118,13 +159,278 @@ switch ($action) {
 }
 
 // ─────────────────────────────────────────────────────────────────
+// Request parsing helpers
+// ─────────────────────────────────────────────────────────────────
+
+/**
+ * Read a single HTTP request header.
+ *
+ * Moodle's required_param()/optional_param() read GET and POST parameters only; they cannot
+ * return request headers. Moodle exposes no API for headers, and core reads the server
+ * environment array directly for the same purpose (see moodlelib's getremoteaddr() and
+ * is_https()). This function is the one place in the plugin that touches that array, so the
+ * raw access stays confined to a single reviewable line.
+ *
+ * Only the three header keys below are readable; anything else returns the default, so no
+ * caller can reach arbitrary server state.
+ *
+ * @param  string $key      One of the whitelisted header keys
+ * @param  string $default  Returned when the header is absent
+ * @return string
+ */
+function local_campion_api_request_header($key, $default = '') {
+    $allowed = [
+        'HTTP_X_CAMPION_API_KEY',
+        'CONTENT_TYPE',
+        'CONTENT_LENGTH',
+    ];
+
+    if (!in_array($key, $allowed, true)) {
+        return $default;
+    }
+
+    // phpcs:ignore moodle.PHP.SuperglobalUsage -- No Moodle API exposes request headers.
+    return isset($_SERVER[$key]) ? (string)$_SERVER[$key] : $default;
+}
+
+/**
+ * Collect provisioning parameters from a GET request.
+ *
+ * Built from an explicit whitelist via optional_param() rather than by reading the query
+ * string directly, so every value is cleaned by Moodle on the way in.
+ *
+ * Note that GET parameter names are matched exactly, whereas POST JSON field names are
+ * matched case-insensitively. POST is the documented transport; GET exists for quick manual
+ * checks, so the common alias spellings are listed here but arbitrary casings are not.
+ *
+ * @return array
+ */
+function local_campion_api_read_get_params() {
+    $spec = [
+        'action'             => PARAM_ALPHANUMEXT,
+        'email'              => PARAM_TEXT,
+        'newEmail'           => PARAM_TEXT,
+        'firstName'          => PARAM_TEXT,
+        'firstname'          => PARAM_TEXT,
+        'surname'            => PARAM_TEXT,
+        'lastName'           => PARAM_TEXT,
+        'school'             => PARAM_TEXT,
+        'schoolName'         => PARAM_TEXT,
+        'acaraId'            => PARAM_ALPHANUMEXT,
+        'acaraid'            => PARAM_ALPHANUMEXT,
+        'acara_id'           => PARAM_ALPHANUMEXT,
+        'schoolId'           => PARAM_ALPHANUMEXT,
+        'yearLevel'          => PARAM_TEXT,
+        'yearlevel'          => PARAM_TEXT,
+        'year'               => PARAM_TEXT,
+        'role'               => PARAM_TEXT,
+        'isbn'               => PARAM_ALPHANUMEXT,
+        'subscriptionPeriod' => PARAM_TEXT,
+        'period'             => PARAM_TEXT,
+        'status'             => PARAM_TEXT,
+        'chargeable'         => PARAM_BOOL,
+    ];
+
+    $params = [];
+    foreach ($spec as $name => $type) {
+        $value = optional_param($name, null, $type);
+        if ($value !== null && $value !== '') {
+            $params[$name] = $value;
+        }
+    }
+
+    return $params;
+}
+
+/**
+ * Parse a POST body into an array, tolerating the malformations commonly produced by
+ * non-browser HTTP clients (ERP middleware, IBM i HTTPAPI, mainframe gateways).
+ *
+ * Handled, in order:
+ *  1. Leading/trailing whitespace and a UTF-8 BOM.
+ *  2. Well-formed JSON — the normal path.
+ *  3. JSON whose string delimiters are typographic ("smart") quotes, which happens when a
+ *     payload is authored in a word processor or pasted through an email client.
+ *  4. application/x-www-form-urlencoded bodies.
+ *
+ * @param  string      $raw        Raw request body
+ * @param  string|null $jsonerror  Set to the JSON error message if JSON parsing failed
+ * @return array                   Parsed fields (empty array if nothing could be parsed)
+ */
+function local_campion_api_parse_body($raw, &$jsonerror = null) {
+    $jsonerror = null;
+
+    $trimmed = trim($raw);
+
+    // Strip a UTF-8 BOM if present — json_decode() rejects it.
+    if (strncmp($trimmed, "\xEF\xBB\xBF", 3) === 0) {
+        $trimmed = substr($trimmed, 3);
+    }
+
+    if ($trimmed === '') {
+        return [];
+    }
+
+    // Path 1: straight JSON.
+    $decoded = json_decode($trimmed, true);
+    if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+        return $decoded;
+    }
+    $jsonerror = json_last_error_msg();
+
+    // Path 2: JSON delimited with typographic quotes. Substitute the ASCII equivalents and
+    // retry. Only accepted if the result parses cleanly, so this cannot corrupt valid input.
+    $smartquotes = [
+        "\xE2\x80\x9C" => '"',  // U+201C left double quotation mark
+        "\xE2\x80\x9D" => '"',  // U+201D right double quotation mark
+        "\xE2\x80\x98" => '"',  // U+2018 left single quotation mark
+        "\xE2\x80\x99" => '"',  // U+2019 right single quotation mark
+        "\xC2\xA0"     => ' ',  // U+00A0 non-breaking space
+    ];
+    $repaired = strtr($trimmed, $smartquotes);
+    if ($repaired !== $trimmed) {
+        $decoded = json_decode($repaired, true);
+        if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+            $jsonerror = null;
+            return $decoded;
+        }
+    }
+
+    // Path 3: form-encoded body. Parsed from the raw body rather than from PHP's populated
+    // form array, so the same code path works regardless of server configuration.
+    $parsed = [];
+    parse_str($trimmed, $parsed);
+    if (!empty($parsed)) {
+        // parse_str() never fails, so only trust it if it produced something action-shaped.
+        foreach ($parsed as $k => $v) {
+            if (is_string($k) && strcasecmp($k, 'action') === 0 && $v !== '') {
+                return $parsed;
+            }
+        }
+    }
+
+    return [];
+}
+
+/**
+ * Case-insensitive field lookup.
+ *
+ * Campion's own middleware sends camelCase ("firstName", "yearLevel"). ERP systems very often
+ * fold field names to upper or lower case in transit, so match on any casing rather than
+ * silently dropping the value.
+ *
+ * @param  array  $data
+ * @param  string ...$names  One or more accepted names; first match wins
+ * @return mixed|null
+ */
+function local_campion_api_field(array $data, ...$names) {
+    foreach ($names as $name) {
+        if (array_key_exists($name, $data)) {
+            return $data[$name];
+        }
+    }
+    // Fall back to a case-insensitive sweep.
+    foreach ($names as $name) {
+        foreach ($data as $key => $value) {
+            if (is_string($key) && strcasecmp($key, $name) === 0) {
+                return $value;
+            }
+        }
+    }
+    return null;
+}
+
+/**
+ * Read the ACARA ID from a request payload.
+ *
+ * Accepts every spelling seen in the wild: acaraId, AcaraId, ACARAID, acara_id, schoolId.
+ * If none is present but 'school' contains nothing but digits, that value is the ACARA ID —
+ * this is the arrangement used before the dedicated field existed, and it is still what some
+ * senders do. Falls back to the site-level ACARA ID setting for single-campus installs.
+ *
+ * @param  array $data
+ * @return string
+ */
+function local_campion_api_read_acaraid(array $data) {
+    $value = local_campion_api_field($data, 'acaraId', 'acaraid', 'acara_id', 'AcaraID', 'schoolId', 'schoolid');
+
+    if ($value === null || trim((string)$value) === '') {
+        $school = local_campion_api_field($data, 'school');
+        if ($school !== null && ctype_digit(trim((string)$school))) {
+            $value = trim((string)$school);
+        }
+    }
+
+    if ($value === null || trim((string)$value) === '') {
+        $value = local_campion_get_acara_id();
+    }
+
+    return trim((string)$value);
+}
+
+/**
+ * Normalise an action name to its canonical casing.
+ *
+ * @param  string $action
+ * @return string  Canonical name, or the original string if unrecognised
+ */
+function local_campion_api_canonical_action($action) {
+    $known = [
+        'ping'                => 'Ping',
+        'getproduct'          => 'GetProduct',
+        'getactiveproducts'   => 'GetActiveProducts',
+        'getuser'             => 'GetUser',
+        'createuser'          => 'CreateUser',
+        'updateuser'          => 'UpdateUser',
+        'deleteuser'          => 'DeleteUser',
+        'createsubscription'  => 'CreateSubscription',
+        'editsubscription'    => 'EditSubscription',
+        'deletesubscription'  => 'DeleteSubscription',
+    ];
+    $key = strtolower(trim((string)$action));
+    return isset($known[$key]) ? $known[$key] : (string)$action;
+}
+
+// ─────────────────────────────────────────────────────────────────
 // Action handlers
 // ─────────────────────────────────────────────────────────────────
+
+/**
+ * Connectivity and payload diagnostic.
+ *
+ * Touches no data. Reports what the server actually received so a client can confirm its
+ * framing is correct — in particular whether the declared Content-Length matches the number
+ * of bytes that arrived, which is the usual cause of an upstream 400 from nginx.
+ *
+ * Only field *names* are echoed, never values, so this is safe to run against production.
+ */
+function api_ping($data, $rawbody, $jsonerror) {
+    $declaredraw = local_campion_api_request_header('CONTENT_LENGTH');
+    $declared    = ($declaredraw === '') ? null : (int)$declaredraw;
+    $received    = strlen($rawbody);
+
+    echo json_encode([
+        'success'         => true,
+        'message'         => 'Campion provisioning API reachable',
+        'plugin_version'  => get_config('local_campion', 'version'),
+        'time'            => time(),
+        'content_type'    => local_campion_api_request_header('CONTENT_TYPE') ?: null,
+        'content_length'  => [
+            'declared_by_client' => $declared,
+            'bytes_received'     => $received,
+            'match'              => ($declared === null) ? null : ($declared === $received),
+        ],
+        'body_parsed'     => !empty($data),
+        'json_error'      => $jsonerror,
+        'fields_received' => array_keys(is_array($data) ? $data : []),
+        'site_acara_id'   => local_campion_get_acara_id() ?: null,
+    ]);
+}
 
 function api_get_product($data) {
     global $DB;
 
-    $isbn = isset($data['isbn']) ? clean_param($data['isbn'], PARAM_RAW_TRIMMED) : '';
+    $isbn = clean_param(trim((string)local_campion_api_field($data, 'isbn', 'ISBN')), PARAM_ALPHANUMEXT);
     if (empty($isbn)) {
         http_response_code(400);
         echo json_encode(['success' => false, 'error' => 'isbn is required']);
@@ -164,7 +470,9 @@ function api_get_active_products() {
 function api_get_user($data) {
     global $DB;
 
-    $email = isset($data['email']) ? strtolower(trim($data['email'])) : '';
+    $email   = strtolower(trim((string)local_campion_api_field($data, 'email')));
+    $acaraid = local_campion_api_read_acaraid($data);
+
     if (empty($email)) {
         http_response_code(400);
         echo json_encode(['success' => false, 'error' => 'email is required']);
@@ -174,6 +482,17 @@ function api_get_user($data) {
     $cu = $DB->get_record('local_campion_users', ['email' => $email]);
     if (!$cu) {
         echo json_encode(['success' => false, 'error' => 'User not found']);
+        return;
+    }
+
+    // If the caller named a campus, confirm the record belongs to it. Returning a user from
+    // a different campus would be wrong for schools whose campuses share a name.
+    if ($acaraid !== '' && !empty($cu->acaraid) && (string)$cu->acaraid !== $acaraid) {
+        echo json_encode([
+            'success' => false,
+            'error'   => 'User not found at the requested ACARA ID',
+            'acaraId' => $acaraid,
+        ]);
         return;
     }
 
@@ -194,6 +513,7 @@ function api_get_user($data) {
         'firstName'     => $cu->firstname,
         'surname'       => $cu->lastname,
         'school'        => $cu->school,
+        'acaraId'       => isset($cu->acaraid) ? $cu->acaraid : null,
         'yearLevel'     => $cu->yearlevel,
         'role'          => $cu->role,
         'subscriptions' => $subscriptions,
@@ -203,25 +523,69 @@ function api_get_user($data) {
 function api_create_user($data) {
     global $DB;
 
-    $email = isset($data['email']) ? strtolower(trim($data['email'])) : '';
+    $email = strtolower(trim((string)local_campion_api_field($data, 'email')));
     if (empty($email)) {
         http_response_code(400);
         echo json_encode(['success' => false, 'error' => 'email is required']);
         return;
     }
 
-    $now = time();
+    if (!validate_email($email)) {
+        http_response_code(400);
+        echo json_encode([
+            'success' => false,
+            'error'   => 'email is not a valid address',
+            'email'   => $email,
+        ]);
+        return;
+    }
 
-    if ($DB->record_exists('local_campion_users', ['email' => $email])) {
-        // Update existing record (CreateUser may also update).
-        $cu = $DB->get_record('local_campion_users', ['email' => $email]);
-        $cu->firstname    = isset($data['firstName']) ? clean_param($data['firstName'], PARAM_TEXT) : $cu->firstname;
-        $cu->lastname     = isset($data['surname'])   ? clean_param($data['surname'],   PARAM_TEXT) : $cu->lastname;
-        $cu->school       = isset($data['school'])    ? clean_param($data['school'],    PARAM_TEXT) : $cu->school;
-        $cu->yearlevel    = isset($data['yearLevel']) ? clean_param($data['yearLevel'], PARAM_TEXT) : $cu->yearlevel;
-        $cu->role         = isset($data['role'])      ? clean_param($data['role'],      PARAM_TEXT) : $cu->role;
+    $acaraid   = local_campion_api_read_acaraid($data);
+    $firstname = local_campion_api_field($data, 'firstName', 'firstname');
+    $surname   = local_campion_api_field($data, 'surname', 'lastName', 'lastname');
+    $school    = local_campion_api_field($data, 'school', 'schoolName', 'schoolname');
+    $yearlevel = local_campion_api_field($data, 'yearLevel', 'yearlevel', 'year');
+    $role      = local_campion_api_field($data, 'role');
+
+    $now = time();
+    $existing = $DB->get_record('local_campion_users', ['email' => $email]);
+
+    if ($existing) {
+        // CreateUser doubles as an update, per the Campion spec.
+        $cu = $existing;
+        $previousacara = (string)(isset($cu->acaraid) ? $cu->acaraid : '');
+
+        if ($firstname !== null) {
+            $cu->firstname = clean_param($firstname, PARAM_TEXT);
+        }
+        if ($surname !== null) {
+            $cu->lastname = clean_param($surname, PARAM_TEXT);
+        }
+        if ($school !== null) {
+            $cu->school = clean_param($school, PARAM_TEXT);
+        }
+        if ($yearlevel !== null) {
+            $cu->yearlevel = clean_param($yearlevel, PARAM_TEXT);
+        }
+        if ($role !== null) {
+            $cu->role = clean_param($role, PARAM_TEXT);
+        }
+        if ($acaraid !== '') {
+            $cu->acaraid = clean_param($acaraid, PARAM_ALPHANUMEXT);
+        }
+
         $cu->timemodified = $now;
         $DB->update_record('local_campion_users', $cu);
+
+        // A user arriving under a different ACARA ID has moved campus. Allowed, but recorded —
+        // it is otherwise invisible and matters for billing and resource entitlement.
+        if ($acaraid !== '' && $previousacara !== '' && $previousacara !== $acaraid) {
+            local_campion_log(
+                'campus_change',
+                'ACARA ID changed from ' . $previousacara . ' to ' . $acaraid . ' for ' . $email,
+                $email
+            );
+        }
 
         // Link to Moodle user if not already linked.
         if (empty($cu->moodleuserid)) {
@@ -231,19 +595,25 @@ function api_create_user($data) {
             }
         }
 
-        local_campion_log('update_user', 'Updated via CreateUser (email: ' . $email . ')', $email);
-        echo json_encode(['success' => true, 'created' => false, 'message' => 'User updated']);
+        local_campion_log('update_user', 'Updated via CreateUser (email: ' . $email . ', acaraId: ' . ($acaraid ?: 'none') . ')', $email);
+        echo json_encode([
+            'success' => true,
+            'created' => false,
+            'message' => 'User updated',
+            'email'   => $email,
+            'acaraId' => isset($cu->acaraid) ? $cu->acaraid : null,
+        ]);
         return;
     }
 
-    $role = isset($data['role']) ? clean_param($data['role'], PARAM_TEXT) : 'student';
     $cu = (object)[
         'email'        => $email,
-        'firstname'    => isset($data['firstName']) ? clean_param($data['firstName'], PARAM_TEXT) : '',
-        'lastname'     => isset($data['surname'])   ? clean_param($data['surname'],   PARAM_TEXT) : '',
-        'school'       => isset($data['school'])    ? clean_param($data['school'],    PARAM_TEXT) : '',
-        'yearlevel'    => isset($data['yearLevel']) ? clean_param($data['yearLevel'], PARAM_TEXT) : '',
-        'role'         => $role,
+        'firstname'    => $firstname !== null ? clean_param($firstname, PARAM_TEXT) : '',
+        'lastname'     => $surname   !== null ? clean_param($surname,   PARAM_TEXT) : '',
+        'school'       => $school    !== null ? clean_param($school,    PARAM_TEXT) : '',
+        'acaraid'      => $acaraid   !== ''   ? clean_param($acaraid,   PARAM_ALPHANUMEXT) : null,
+        'yearlevel'    => $yearlevel !== null ? clean_param($yearlevel, PARAM_TEXT) : '',
+        'role'         => $role      !== null ? clean_param($role,      PARAM_TEXT) : 'student',
         'campionid'    => null,
         'sso_only'     => 0,
         'timecreated'  => $now,
@@ -256,16 +626,22 @@ function api_create_user($data) {
         $cu->moodleuserid = $mu->id;
     }
 
-    $DB->insert_record('local_campion_users', $cu);
-    local_campion_log('create_user', 'User created via provisioning API (email: ' . $email . ')', $email);
+    $cu->id = $DB->insert_record('local_campion_users', $cu);
+    local_campion_log('create_user', 'User created via provisioning API (email: ' . $email . ', acaraId: ' . ($acaraid ?: 'none') . ')', $email);
 
-    echo json_encode(['success' => true, 'created' => true, 'message' => 'User created']);
+    echo json_encode([
+        'success' => true,
+        'created' => true,
+        'message' => 'User created',
+        'email'   => $email,
+        'acaraId' => $cu->acaraid,
+    ]);
 }
 
 function api_update_user($data) {
     global $DB;
 
-    $email = isset($data['email']) ? strtolower(trim($data['email'])) : '';
+    $email = strtolower(trim((string)local_campion_api_field($data, 'email')));
     if (empty($email)) {
         http_response_code(400);
         echo json_encode(['success' => false, 'error' => 'email is required']);
@@ -279,31 +655,70 @@ function api_update_user($data) {
         return;
     }
 
-    if (isset($data['firstName'])) $cu->firstname  = clean_param($data['firstName'],  PARAM_TEXT);
-    if (isset($data['surname']))   $cu->lastname   = clean_param($data['surname'],     PARAM_TEXT);
-    if (isset($data['school']))    $cu->school     = clean_param($data['school'],      PARAM_TEXT);
-    if (isset($data['yearLevel'])) $cu->yearlevel  = clean_param($data['yearLevel'],   PARAM_TEXT);
-    if (isset($data['role']))      $cu->role       = clean_param($data['role'],        PARAM_TEXT);
+    $acaraid   = local_campion_api_read_acaraid($data);
+    $firstname = local_campion_api_field($data, 'firstName', 'firstname');
+    $surname   = local_campion_api_field($data, 'surname', 'lastName', 'lastname');
+    $school    = local_campion_api_field($data, 'school', 'schoolName', 'schoolname');
+    $yearlevel = local_campion_api_field($data, 'yearLevel', 'yearlevel', 'year');
+    $role      = local_campion_api_field($data, 'role');
+
+    $previousacara = (string)(isset($cu->acaraid) ? $cu->acaraid : '');
+
+    if ($firstname !== null) {
+        $cu->firstname = clean_param($firstname, PARAM_TEXT);
+    }
+    if ($surname !== null) {
+        $cu->lastname = clean_param($surname, PARAM_TEXT);
+    }
+    if ($school !== null) {
+        $cu->school = clean_param($school, PARAM_TEXT);
+    }
+    if ($yearlevel !== null) {
+        $cu->yearlevel = clean_param($yearlevel, PARAM_TEXT);
+    }
+    if ($role !== null) {
+        $cu->role = clean_param($role, PARAM_TEXT);
+    }
+    if ($acaraid !== '') {
+        $cu->acaraid = clean_param($acaraid, PARAM_ALPHANUMEXT);
+    }
+
     $cu->timemodified = time();
 
+    if ($acaraid !== '' && $previousacara !== '' && $previousacara !== $acaraid) {
+        local_campion_log(
+            'campus_change',
+            'ACARA ID changed from ' . $previousacara . ' to ' . $acaraid . ' for ' . $email,
+            $email
+        );
+    }
+
     // Handle email change.
-    if (!empty($data['newEmail'])) {
-        $new_email = strtolower(trim($data['newEmail']));
-        if (!$DB->record_exists('local_campion_users', ['email' => $new_email])) {
-            $cu->email = $new_email;
+    $newemail = local_campion_api_field($data, 'newEmail', 'newemail');
+    if (!empty($newemail)) {
+        $newemail = strtolower(trim((string)$newemail));
+        if (validate_email($newemail) && !$DB->record_exists('local_campion_users', ['email' => $newemail])) {
+            $cu->email = $newemail;
         }
     }
 
     $DB->update_record('local_campion_users', $cu);
     local_campion_log('update_user', 'User updated via provisioning API (email: ' . $email . ')', $email);
 
-    echo json_encode(['success' => true, 'message' => 'User updated']);
+    echo json_encode([
+        'success' => true,
+        'message' => 'User updated',
+        'email'   => $cu->email,
+        'acaraId' => isset($cu->acaraid) ? $cu->acaraid : null,
+    ]);
 }
 
 function api_delete_user($data) {
     global $DB;
 
-    $email = isset($data['email']) ? strtolower(trim($data['email'])) : '';
+    $email   = strtolower(trim((string)local_campion_api_field($data, 'email')));
+    $acaraid = local_campion_api_read_acaraid($data);
+
     if (empty($email)) {
         http_response_code(400);
         echo json_encode(['success' => false, 'error' => 'email is required']);
@@ -313,6 +728,19 @@ function api_delete_user($data) {
     $cu = $DB->get_record('local_campion_users', ['email' => $email]);
     if (!$cu) {
         echo json_encode(['success' => false, 'error' => 'User not found']);
+        return;
+    }
+
+    // Refuse to delete across campuses. A destructive call naming a different ACARA ID is a
+    // mismatch in the caller, not an instruction to remove this record.
+    if ($acaraid !== '' && !empty($cu->acaraid) && (string)$cu->acaraid !== $acaraid) {
+        http_response_code(409);
+        echo json_encode([
+            'success'         => false,
+            'error'           => 'User exists but belongs to a different ACARA ID — not deleted',
+            'requestedAcaraId' => $acaraid,
+            'actualAcaraId'   => $cu->acaraid,
+        ]);
         return;
     }
 
@@ -327,9 +755,9 @@ function api_delete_user($data) {
 function api_create_subscription($data) {
     global $DB;
 
-    $email = isset($data['email'])              ? strtolower(trim($data['email'])) : '';
-    $isbn  = isset($data['isbn'])               ? clean_param($data['isbn'], PARAM_RAW_TRIMMED) : '';
-    $period = isset($data['subscriptionPeriod'])? clean_param($data['subscriptionPeriod'], PARAM_TEXT) : '';
+    $email  = strtolower(trim((string)local_campion_api_field($data, 'email')));
+    $isbn   = clean_param(trim((string)local_campion_api_field($data, 'isbn', 'ISBN')), PARAM_ALPHANUMEXT);
+    $period = clean_param((string)local_campion_api_field($data, 'subscriptionPeriod', 'subscriptionperiod', 'period'), PARAM_TEXT);
 
     if (empty($email) || empty($isbn)) {
         http_response_code(400);
@@ -348,7 +776,8 @@ function api_create_subscription($data) {
     $product = $DB->get_record('local_campion_products', ['isbn' => $isbn]);
     $productname = $product ? $product->productname : $isbn;
 
-    $chargeable = isset($data['chargeable']) ? (int)(bool)$data['chargeable'] : 1;
+    $chargeableraw = local_campion_api_field($data, 'chargeable');
+    $chargeable = ($chargeableraw === null) ? 1 : (int)(bool)$chargeableraw;
     $now = time();
 
     $existing = $DB->get_record('local_campion_subscriptions', ['campionuserid' => $cu->id, 'isbn' => $isbn]);
@@ -382,8 +811,8 @@ function api_create_subscription($data) {
 function api_edit_subscription($data) {
     global $DB;
 
-    $email = isset($data['email']) ? strtolower(trim($data['email'])) : '';
-    $isbn  = isset($data['isbn'])  ? clean_param($data['isbn'], PARAM_RAW_TRIMMED) : '';
+    $email = strtolower(trim((string)local_campion_api_field($data, 'email')));
+    $isbn  = clean_param(trim((string)local_campion_api_field($data, 'isbn', 'ISBN')), PARAM_ALPHANUMEXT);
 
     if (empty($email) || empty($isbn)) {
         http_response_code(400);
@@ -405,9 +834,21 @@ function api_edit_subscription($data) {
         return;
     }
 
-    if (isset($data['subscriptionPeriod'])) $sub->subscriptionperiod = clean_param($data['subscriptionPeriod'], PARAM_TEXT);
-    if (isset($data['status']))             $sub->status             = clean_param($data['status'], PARAM_TEXT);
-    if (isset($data['chargeable']))         $sub->chargeable         = (int)(bool)$data['chargeable'];
+    $period     = local_campion_api_field($data, 'subscriptionPeriod', 'subscriptionperiod', 'period');
+    $status     = local_campion_api_field($data, 'status');
+    $chargeable = local_campion_api_field($data, 'chargeable');
+
+    if ($period !== null) {
+
+        $sub->subscriptionperiod = clean_param($period, PARAM_TEXT);
+
+    }
+    if ($status !== null) {
+        $sub->status = clean_param($status, PARAM_TEXT);
+    }
+    if ($chargeable !== null) {
+        $sub->chargeable = (int)(bool)$chargeable;
+    }
     $sub->timemodified = time();
 
     $DB->update_record('local_campion_subscriptions', $sub);
@@ -419,8 +860,8 @@ function api_edit_subscription($data) {
 function api_delete_subscription($data) {
     global $DB;
 
-    $email = isset($data['email']) ? strtolower(trim($data['email'])) : '';
-    $isbn  = isset($data['isbn'])  ? clean_param($data['isbn'], PARAM_RAW_TRIMMED) : '';
+    $email = strtolower(trim((string)local_campion_api_field($data, 'email')));
+    $isbn  = clean_param(trim((string)local_campion_api_field($data, 'isbn', 'ISBN')), PARAM_ALPHANUMEXT);
 
     if (empty($email) || empty($isbn)) {
         http_response_code(400);

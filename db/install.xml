@@ -12,6 +12,7 @@
         <FIELD NAME="firstname" TYPE="char" LENGTH="100" NOTNULL="true"/>
         <FIELD NAME="lastname" TYPE="char" LENGTH="100" NOTNULL="true"/>
         <FIELD NAME="school" TYPE="char" LENGTH="255" NOTNULL="true"/>
+        <FIELD NAME="acaraid" TYPE="char" LENGTH="20" NOTNULL="false" COMMENT="ACARA school/campus identifier — distinguishes campuses that share a school name"/>
         <FIELD NAME="yearlevel" TYPE="char" LENGTH="20" NOTNULL="true"/>
         <FIELD NAME="role" TYPE="char" LENGTH="20" NOTNULL="true" DEFAULT="student" COMMENT="student or teacher"/>
         <FIELD NAME="campionid" TYPE="char" LENGTH="100" NOTNULL="false" COMMENT="Campion-side user identifier if returned"/>
@@ -26,6 +27,7 @@
       </KEYS>
       <INDEXES>
         <INDEX NAME="moodleuserid" UNIQUE="false" FIELDS="moodleuserid"/>
+        <INDEX NAME="acaraid" UNIQUE="false" FIELDS="acaraid"/>
       </INDEXES>
     </TABLE>
 

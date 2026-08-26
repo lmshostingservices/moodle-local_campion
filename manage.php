@@ -29,7 +29,7 @@ global $DB, $OUTPUT, $CFG;
 // ── Action: register or update a product ─────────────────────────
 $action = optional_param('action', '', PARAM_ALPHANUMEXT);
 if ($action === 'save_product' && confirm_sesskey()) {
-    $isbn        = required_param('isbn', PARAM_RAW_TRIMMED);
+    $isbn        = required_param('isbn', PARAM_ALPHANUMEXT);
     $productname = optional_param('productname', '', PARAM_TEXT);
     $status      = optional_param('status', 'active', PARAM_ALPHANUMEXT);
     $now         = time();
@@ -124,7 +124,9 @@ if ($tab === 'overview') {
         : html_writer::tag('span', 'Incomplete — set Client ID and Secret in Settings', ['class' => 'badge badge-warning']);
     echo html_writer::tag('p', 'OAuth credentials: ' . $badge);
     echo html_writer::tag('p', 'IAM URL: <code>' . htmlspecialchars($iam_url) . '</code>');
-    echo html_writer::tag('p', 'ACARA ID: <code>' . ($acara_id ?: '(not set)') . '</code>');
+    $distinctacara = $DB->count_records_select('local_campion_users', "acaraid IS NOT NULL AND acaraid <> ''");
+    echo html_writer::tag('p', 'Default ACARA ID: <code>' . htmlspecialchars($acara_id ?: '(not set — sent per user)') . '</code>');
+    echo html_writer::tag('p', 'Users with an ACARA ID: <code>' . $distinctacara . ' / ' . $num_users . '</code>');
     echo html_writer::tag('p', 'SSO Callback URL (share with Campion):');
     echo html_writer::tag('pre', htmlspecialchars($sso_url), ['class' => 'bg-light p-2']);
     echo html_writer::tag('p', 'Provisioning API URL (share with Campion):');
@@ -146,6 +148,7 @@ if ($tab === 'overview') {
             get_string('col_firstname',   'local_campion'),
             get_string('col_lastname',    'local_campion'),
             get_string('col_school',      'local_campion'),
+            get_string('col_acaraid',     'local_campion'),
             get_string('col_yearlevel',   'local_campion'),
             get_string('col_role',        'local_campion'),
             get_string('col_timecreated', 'local_campion'),
@@ -157,6 +160,7 @@ if ($tab === 'overview') {
                 htmlspecialchars($u->firstname),
                 htmlspecialchars($u->lastname),
                 htmlspecialchars($u->school),
+                htmlspecialchars($u->acaraid ?? ''),
                 htmlspecialchars($u->yearlevel),
                 htmlspecialchars($u->role),
                 userdate($u->timecreated),

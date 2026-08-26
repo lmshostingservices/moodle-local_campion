@@ -43,7 +43,7 @@ if ($hassiteconfig) {
         get_string('client_id', 'local_campion'),
         get_string('client_id_desc', 'local_campion'),
         '',
-        PARAM_RAW_TRIMMED
+        PARAM_TEXT
     ));
 
     $settings->add(new admin_setting_configpasswordunmask(
@@ -69,13 +69,15 @@ if ($hassiteconfig) {
         ''
     ));
 
-    // ── School ACARA ID ──────────────────────────────────────────────
+    // ── School ACARA ID (default for this site) ──────────────────────
+    // Used only when a provisioning call supplies no acaraId of its own. Multi-campus
+    // installations should send acaraId per user rather than relying on this.
     $settings->add(new admin_setting_configtext(
         'local_campion/acara_id',
         get_string('acara_id', 'local_campion'),
         get_string('acara_id_desc', 'local_campion'),
         '',
-        PARAM_RAW_TRIMMED
+        PARAM_ALPHANUMEXT
     ));
 
     // ── Endpoint info (read-only display) ────────────────────────────
