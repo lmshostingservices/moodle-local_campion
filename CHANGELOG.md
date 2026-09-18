@@ -7,6 +7,38 @@ Moodle numeric version (`$plugin->version` in `version.php`), shown in parenthes
 
 ---
 
+## v1.0.9 — 2026-09-17 (2026091701)
+
+### Documentation
+
+- Rewrote `README.md` to document the full plugin surface: every setting, every API action,
+  the ACARA ID and ISBN validation rules, all response codes, both SSO entry points, and the
+  account model. The previous README covered only part of the API and none of the settings
+  added in this release.
+
+### Added
+
+- **ISBN validation on `CreateSubscription`.** Previously any value was accepted, so a
+  malformed ISBN silently created a subscription to a non-existent product. Now:
+  - If the site has a product catalogue, it is authoritative — an ISBN not in
+    `local_campion_products` is rejected with `422`. This also covers Campion's internal
+    product codes, which are not ISBNs but are in the catalogue.
+  - If no catalogue has been loaded, the ISBN-13 or ISBN-10 check digit is validated instead,
+    so a site mid-setup is not locked out entirely. Controlled by the new **Validate ISBNs**
+    setting.
+- **ACARA ID validation on `CreateUser` and `UpdateUser`.** A new **Allowed ACARA IDs**
+  setting lists the campuses a site may provision for; anything else is rejected with `422`
+  and the response names the permitted IDs. Blank accepts any ACARA ID, preserving pre-1.0.9
+  behaviour on upgrade.
+- **Optional Moodle account creation on first SSO login**, via the new **Create Moodle
+  accounts on first SSO login** setting, disabled by default. The provisioning API records a
+  Campion entitlement and has never created Moodle accounts; sites that rely on Campion to
+  provision users outright can now enable this. Accounts are created only after the JWT has
+  passed signature, replay and expiry checks, carry no usable password, and are reachable
+  only through SSO. Name fields are taken from the token's name claims where present.
+
+---
+
 ## v1.0.8 — 2026-08-25 (2026082502)
 
 ### Changed

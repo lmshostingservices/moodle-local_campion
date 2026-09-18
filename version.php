@@ -25,8 +25,8 @@
 defined('MOODLE_INTERNAL') || die();
 
 $plugin->component = 'local_campion';
-$plugin->version   = 2026082502;
-$plugin->release   = '1.0.8'; // RELEASE-PIPELINE (v1.0.8): Removed the last direct request-method read; the API now branches on whether a body is present. Header access is confined to one whitelisted accessor covering three keys. Comments reworded so no superglobal name appears as a literal token anywhere in the source.
+$plugin->version   = 2026091701;
+$plugin->release   = '1.0.9'; // VALIDATION (v1.0.9): CreateSubscription now rejects unknown ISBNs against the product catalogue, falling back to ISBN-13/ISBN-10 check-digit validation when no catalogue is loaded. CreateUser and UpdateUser reject ACARA IDs outside a configurable allow-list. Optional creation of Moodle accounts on first Campion SSO login, disabled by default.
 $plugin->requires  = 2022041900; // Moodle 4.0+
 $plugin->supported = [400, 500]; // Moodle 4.0 to 5.x
 $plugin->maturity  = MATURITY_STABLE;

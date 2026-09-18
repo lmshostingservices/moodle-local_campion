@@ -547,6 +547,20 @@ function api_create_user($data) {
     $yearlevel = local_campion_api_field($data, 'yearLevel', 'yearlevel', 'year');
     $role      = local_campion_api_field($data, 'role');
 
+    if (!local_campion_acara_id_allowed($acaraid)) {
+        http_response_code(422);
+        echo json_encode([
+            'success'         => false,
+            'error'           => 'Unknown ACARA ID for this site',
+            'acaraId'         => $acaraid,
+            'allowedAcaraIds' => local_campion_get_allowed_acara_ids(),
+            'hint'            => 'This Moodle site is provisioned for the campuses listed above. '
+                               . 'Check the ACARA ID, or have the site administrator add it under '
+                               . 'Campion Integration settings.',
+        ]);
+        return;
+    }
+
     $now = time();
     $existing = $DB->get_record('local_campion_users', ['email' => $email]);
 
@@ -662,6 +676,17 @@ function api_update_user($data) {
     $yearlevel = local_campion_api_field($data, 'yearLevel', 'yearlevel', 'year');
     $role      = local_campion_api_field($data, 'role');
 
+    if (!local_campion_acara_id_allowed($acaraid)) {
+        http_response_code(422);
+        echo json_encode([
+            'success'         => false,
+            'error'           => 'Unknown ACARA ID for this site',
+            'acaraId'         => $acaraid,
+            'allowedAcaraIds' => local_campion_get_allowed_acara_ids(),
+        ]);
+        return;
+    }
+
     $previousacara = (string)(isset($cu->acaraid) ? $cu->acaraid : '');
 
     if ($firstname !== null) {
@@ -772,8 +797,42 @@ function api_create_subscription($data) {
         return;
     }
 
-    // Get product name from products table if available.
+    // Validate the ISBN before creating anything.
+    //
+    // The product catalogue is authoritative: Campion issues internal product codes alongside
+    // real ISBNs, so a value that is in the catalogue is valid whatever its shape. Only when
+    // no catalogue has been loaded do we fall back to checking the ISBN check digit, so a
+    // site that has not yet synced its products is not locked out entirely.
     $product = $DB->get_record('local_campion_products', ['isbn' => $isbn]);
+
+    if (!$product) {
+        $cataloguesize = $DB->count_records('local_campion_products');
+
+        if ($cataloguesize > 0) {
+            http_response_code(422);
+            echo json_encode([
+                'success' => false,
+                'error'   => 'Unknown ISBN — not in this site\'s product catalogue',
+                'isbn'    => $isbn,
+                'hint'    => 'The catalogue holds ' . $cataloguesize . ' product(s). Check the '
+                           . 'ISBN, or have the product added before subscribing users to it.',
+            ]);
+            return;
+        }
+
+        if (get_config('local_campion', 'validate_isbn') && !local_campion_validate_isbn($isbn)) {
+            http_response_code(422);
+            echo json_encode([
+                'success' => false,
+                'error'   => 'Invalid ISBN — failed check-digit validation',
+                'isbn'    => $isbn,
+                'hint'    => 'Expected a valid ISBN-13 or ISBN-10. No product catalogue is '
+                           . 'loaded on this site, so the check digit is the only check available.',
+            ]);
+            return;
+        }
+    }
+
     $productname = $product ? $product->productname : $isbn;
 
     $chargeableraw = local_campion_api_field($data, 'chargeable');

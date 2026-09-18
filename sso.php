@@ -105,6 +105,22 @@ $email       = isset($payload['email'])      ? strtolower(trim($payload['email']
 $resource_id = isset($payload['resource_id']) ? $payload['resource_id'] : '';
 $page_id     = isset($payload['page_id'])     ? $payload['page_id']     : '';
 
+// Optional name claims, used only when auto-creating a Moodle account below.
+$claimfirst  = '';
+$claimlast   = '';
+foreach (['firstName', 'firstname', 'given_name', 'givenName'] as $k) {
+    if (!empty($payload[$k])) {
+        $claimfirst = clean_param($payload[$k], PARAM_TEXT);
+        break;
+    }
+}
+foreach (['surname', 'lastName', 'lastname', 'family_name', 'familyName'] as $k) {
+    if (!empty($payload[$k])) {
+        $claimlast = clean_param($payload[$k], PARAM_TEXT);
+        break;
+    }
+}
+
 if (empty($email)) {
     local_campion_log('sso_error', 'JWT contained no email claim');
     throw new moodle_exception('sso_no_email', 'local_campion');
@@ -133,8 +149,35 @@ if (isloggedin() && !isguestuser()) {
 $moodle_user = local_campion_find_moodle_user($email);
 
 if (!$moodle_user) {
-    local_campion_log('sso_error', 'No Moodle account for ' . $email, $email);
-    throw new moodle_exception('sso_user_not_found', 'local_campion');
+    // The provisioning API records a Campion entitlement; it does not create Moodle accounts.
+    // Where a site relies on Campion to provision its users outright, enabling the
+    // sso_autocreate setting creates the account on first arrival. The token has already been
+    // signature-verified, replay-checked and expiry-checked by this point, so the email is
+    // trusted. The account carries no usable password and is reachable only via SSO.
+    if (get_config('local_campion', 'sso_autocreate')) {
+        require_once($CFG->dirroot . '/user/lib.php');
+
+        $newuser = (object)[
+            'username'    => \core_text::strtolower($email),
+            'email'       => $email,
+            'firstname'   => ($claimfirst !== '') ? $claimfirst : 'Campion',
+            'lastname'    => ($claimlast !== '')  ? $claimlast  : 'User',
+            'auth'        => 'manual',
+            'confirmed'   => 1,
+            'mnethostid'  => $CFG->mnet_localhost_id,
+            'password'    => complex_random_string(32),
+            'lang'        => $CFG->lang,
+            'timecreated' => time(),
+        ];
+
+        $newuserid   = user_create_user($newuser, true, false);
+        $moodle_user = $DB->get_record('user', ['id' => $newuserid]);
+
+        local_campion_log('sso_autocreate', 'Moodle account created on first Campion SSO login', $email, $newuserid);
+    } else {
+        local_campion_log('sso_error', 'No Moodle account for ' . $email, $email);
+        throw new moodle_exception('sso_user_not_found', 'local_campion');
+    }
 }
 
 // ── Ensure Campion user record exists ────────────────────────────

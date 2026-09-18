@@ -69,6 +69,33 @@ if ($hassiteconfig) {
         ''
     ));
 
+    // ── Allowed ACARA IDs ────────────────────────────────────────────
+    // Provisioning calls naming an ACARA ID outside this list are rejected with 422. Leave
+    // blank to accept any ACARA ID, which is the pre-1.0.9 behaviour.
+    $settings->add(new admin_setting_configtextarea(
+        'local_campion/allowed_acara_ids',
+        get_string('allowed_acara_ids', 'local_campion'),
+        get_string('allowed_acara_ids_desc', 'local_campion'),
+        '',
+        PARAM_TEXT
+    ));
+
+    // ── ISBN validation ──────────────────────────────────────────────
+    $settings->add(new admin_setting_configcheckbox(
+        'local_campion/validate_isbn',
+        get_string('validate_isbn', 'local_campion'),
+        get_string('validate_isbn_desc', 'local_campion'),
+        1
+    ));
+
+    // ── Auto-create Moodle accounts on first SSO ─────────────────────
+    $settings->add(new admin_setting_configcheckbox(
+        'local_campion/sso_autocreate',
+        get_string('sso_autocreate', 'local_campion'),
+        get_string('sso_autocreate_desc', 'local_campion'),
+        0
+    ));
+
     // ── School ACARA ID (default for this site) ──────────────────────
     // Used only when a provisioning call supplies no acaraId of its own. Multi-campus
     // installations should send acaraId per user rather than relying on this.

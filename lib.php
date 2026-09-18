@@ -261,6 +261,76 @@ function local_campion_get_or_create_campion_user($email, array $data = []) {
 }
 
 /**
+ * Validate an ISBN-13 or ISBN-10 check digit.
+ *
+ * Campion also issues internal product codes that are not ISBNs (for example CAMFTG00078ST),
+ * so this only judges values that look like a 10- or 13-character book number. Anything else
+ * returns false and is expected to be validated against the product catalogue instead.
+ *
+ * @param  string $isbn
+ * @return bool   True if the value is a structurally valid ISBN-13 or ISBN-10
+ */
+function local_campion_validate_isbn($isbn) {
+    $isbn = strtoupper(preg_replace('/[\s-]/', '', (string)$isbn));
+
+    if (preg_match('/^\d{13}$/', $isbn)) {
+        $sum = 0;
+        for ($i = 0; $i < 12; $i++) {
+            $sum += (int)$isbn[$i] * (($i % 2 === 0) ? 1 : 3);
+        }
+        return ((10 - ($sum % 10)) % 10) === (int)$isbn[12];
+    }
+
+    if (preg_match('/^\d{9}[\dX]$/', $isbn)) {
+        $sum = 0;
+        for ($i = 0; $i < 9; $i++) {
+            $sum += (int)$isbn[$i] * (10 - $i);
+        }
+        $sum += ($isbn[9] === 'X') ? 10 : (int)$isbn[9];
+        return ($sum % 11) === 0;
+    }
+
+    return false;
+}
+
+/**
+ * The ACARA IDs this Moodle site is permitted to provision for.
+ *
+ * Read from the "Allowed ACARA IDs" setting, falling back to the single default ACARA ID.
+ * An empty result means no allow-list is configured and ACARA IDs are not checked, which
+ * keeps existing single-campus sites working unchanged after upgrade.
+ *
+ * @return array Zero or more ACARA ID strings
+ */
+function local_campion_get_allowed_acara_ids() {
+    $raw = (string)get_config('local_campion', 'allowed_acara_ids');
+
+    if (trim($raw) === '') {
+        $raw = (string)get_config('local_campion', 'acara_id');
+    }
+
+    $ids = preg_split('/[\s,;]+/', trim($raw), -1, PREG_SPLIT_NO_EMPTY);
+
+    return array_values(array_unique(array_map('trim', $ids ?: [])));
+}
+
+/**
+ * Check an ACARA ID against the configured allow-list.
+ *
+ * @param  string $acaraid
+ * @return bool   True if allowed, or if no allow-list is configured
+ */
+function local_campion_acara_id_allowed($acaraid) {
+    $allowed = local_campion_get_allowed_acara_ids();
+
+    if (empty($allowed)) {
+        return true;
+    }
+
+    return in_array(trim((string)$acaraid), $allowed, true);
+}
+
+/**
  * Find a Campion user record, optionally scoped to a single campus.
  *
  * Campuses of the same school routinely share a name, so where an ACARA ID is supplied it is
