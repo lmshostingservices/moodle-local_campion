@@ -7,6 +7,26 @@ Moodle numeric version (`$plugin->version` in `version.php`), shown in parenthes
 
 ---
 
+## v1.0.10 — 2026-09-24 (2026092400)
+
+### Fixed
+
+- **ISBN validation was silently inactive on most sites.** The check was guarded by
+  `get_config('local_campion', 'validate_isbn')`. A Moodle `admin_setting_configcheckbox`
+  default is only written to config when an administrator saves the settings page, so on any
+  site where nobody had, `get_config()` returned `false` and the entire check was skipped —
+  the setting displayed as "on" in the admin UI while behaving as "off". An unset value now
+  resolves to the documented default of on. Reported by Campion, who found
+  `CreateSubscription` accepting `9781234567890aaaa` with a 200.
+
+### Changed
+
+- `Ping` now also reports the ISBN validation state, the number of products in the catalogue
+  and the configured ACARA allow-list, so validation behaviour can be confirmed without
+  creating any data.
+
+---
+
 ## v1.0.9 — 2026-09-17 (2026091701)
 
 ### Documentation

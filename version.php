@@ -25,8 +25,8 @@
 defined('MOODLE_INTERNAL') || die();
 
 $plugin->component = 'local_campion';
-$plugin->version   = 2026091701;
-$plugin->release   = '1.0.9'; // VALIDATION (v1.0.9): CreateSubscription now rejects unknown ISBNs against the product catalogue, falling back to ISBN-13/ISBN-10 check-digit validation when no catalogue is loaded. CreateUser and UpdateUser reject ACARA IDs outside a configurable allow-list. Optional creation of Moodle accounts on first Campion SSO login, disabled by default.
+$plugin->version   = 2026092400;
+$plugin->release   = '1.0.10'; // FIX-ISBN-DEFAULT (v1.0.10): ISBN check-digit validation was skipped entirely on any site where an administrator had not saved the settings page, because an unsaved checkbox default reads as false from get_config(). Unset now resolves to the documented default of on. Ping additionally reports validation state, catalogue size and the ACARA allow-list.
 $plugin->requires  = 2022041900; // Moodle 4.0+
 $plugin->supported = [400, 500]; // Moodle 4.0 to 5.x
 $plugin->maturity  = MATURITY_STABLE;

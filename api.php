@@ -405,6 +405,8 @@ function local_campion_api_canonical_action($action) {
  * Only field *names* are echoed, never values, so this is safe to run against production.
  */
 function api_ping($data, $rawbody, $jsonerror) {
+    global $DB;
+
     $declaredraw = local_campion_api_request_header('CONTENT_LENGTH');
     $declared    = ($declaredraw === '') ? null : (int)$declaredraw;
     $received    = strlen($rawbody);
@@ -424,6 +426,11 @@ function api_ping($data, $rawbody, $jsonerror) {
         'json_error'      => $jsonerror,
         'fields_received' => array_keys(is_array($data) ? $data : []),
         'site_acara_id'   => local_campion_get_acara_id() ?: null,
+        'validation'      => [
+            'isbn_check_digit'  => local_campion_isbn_validation_enabled() ? 'on' : 'off',
+            'product_catalogue' => $DB->count_records('local_campion_products'),
+            'allowed_acara_ids' => local_campion_get_allowed_acara_ids(),
+        ],
     ]);
 }
 
@@ -820,7 +827,7 @@ function api_create_subscription($data) {
             return;
         }
 
-        if (get_config('local_campion', 'validate_isbn') && !local_campion_validate_isbn($isbn)) {
+        if (local_campion_isbn_validation_enabled() && !local_campion_validate_isbn($isbn)) {
             http_response_code(422);
             echo json_encode([
                 'success' => false,

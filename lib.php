@@ -294,6 +294,26 @@ function local_campion_validate_isbn($isbn) {
 }
 
 /**
+ * Whether ISBN check-digit validation is switched on.
+ *
+ * A Moodle admin_setting_configcheckbox default is only written to config when an
+ * administrator saves the settings page. Until that happens get_config() returns false, which
+ * would silently disable validation on a freshly upgraded site — the setting reads as "on" in
+ * the admin UI while behaving as "off". Treat "never saved" as the documented default instead.
+ *
+ * @return bool
+ */
+function local_campion_isbn_validation_enabled() {
+    $value = get_config('local_campion', 'validate_isbn');
+
+    if ($value === false || $value === null || $value === '') {
+        return true; // Documented default: on.
+    }
+
+    return (bool)$value;
+}
+
+/**
  * The ACARA IDs this Moodle site is permitted to provision for.
  *
  * Read from the "Allowed ACARA IDs" setting, falling back to the single default ACARA ID.
