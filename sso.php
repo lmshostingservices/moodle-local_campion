@@ -162,6 +162,12 @@ if (!$moodle_user) {
             'email'       => $email,
             'firstname'   => ($claimfirst !== '') ? $claimfirst : 'Campion',
             'lastname'    => ($claimlast !== '')  ? $claimlast  : 'User',
+            // 'manual' with a random, undisclosed password. Note that 'nologin' is NOT a
+            // workable alternative here: core_user::require_active_user() treats a 'nologin'
+            // account as suspended (lib/classes/user.php), so completing a login throws and
+            // SSO fails outright. The password is 32 random characters that are never stored
+            // or sent anywhere, so it cannot be guessed — but see the README: a site with
+            // forgot-password enabled does let the holder set one and sign in directly.
             'auth'        => 'manual',
             'confirmed'   => 1,
             'mnethostid'  => $CFG->mnet_localhost_id,
@@ -197,7 +203,10 @@ $DB->update_record('local_campion_users', (object)[
 ]);
 
 // ── Complete Moodle login ─────────────────────────────────────────
-\core\session\manager::write_close();
+// Do NOT call \core\session\manager::write_close() here. It closes the session for writing,
+// and complete_user_login() then regenerates the session and writes $USER into it — into a
+// session that is already closed. The login appears to succeed and is even logged, but
+// nothing persists, so the user is bounced to the login page on the very next request.
 complete_user_login($moodle_user);
 
 local_campion_log('sso_login', 'Campion SSO login successful', $email, $moodle_user->id);

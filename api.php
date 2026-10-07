@@ -554,13 +554,32 @@ function api_create_user($data) {
     $yearlevel = local_campion_api_field($data, 'yearLevel', 'yearlevel', 'year');
     $role      = local_campion_api_field($data, 'role');
 
-    if (!local_campion_acara_id_allowed($acaraid)) {
+    // Validate the campus. An absent ACARA ID and an unrecognised one are different faults and
+    // get different messages, so the caller can tell "you forgot a field" from "that school
+    // isn't set up here".
+    $allowedids = local_campion_get_allowed_acara_ids();
+
+    if ($acaraid === '') {
+        if (!empty($allowedids)) {
+            http_response_code(422);
+            echo json_encode([
+                'success'         => false,
+                'error'           => 'acaraId is required',
+                'allowedAcaraIds' => $allowedids,
+                'hint'            => 'This site provisions for specific campuses, so every user '
+                                   . 'must name one. Send acaraId, or put the ACARA ID in the '
+                                   . 'school field.',
+            ]);
+            return;
+        }
+        // No allow-list configured — accept, as single-campus sites did before 1.0.9.
+    } else if (!local_campion_acara_id_allowed($acaraid)) {
         http_response_code(422);
         echo json_encode([
             'success'         => false,
             'error'           => 'Unknown ACARA ID for this site',
             'acaraId'         => $acaraid,
-            'allowedAcaraIds' => local_campion_get_allowed_acara_ids(),
+            'allowedAcaraIds' => $allowedids,
             'hint'            => 'This Moodle site is provisioned for the campuses listed above. '
                                . 'Check the ACARA ID, or have the site administrator add it under '
                                . 'Campion Integration settings.',
@@ -683,7 +702,9 @@ function api_update_user($data) {
     $yearlevel = local_campion_api_field($data, 'yearLevel', 'yearlevel', 'year');
     $role      = local_campion_api_field($data, 'role');
 
-    if (!local_campion_acara_id_allowed($acaraid)) {
+    // Only validate a campus the caller actually named. The record already has one, so a
+    // partial update — a year level at rollover, say — must not be forced to resend it.
+    if ($acaraid !== '' && !local_campion_acara_id_allowed($acaraid)) {
         http_response_code(422);
         echo json_encode([
             'success'         => false,

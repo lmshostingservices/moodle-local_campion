@@ -7,6 +7,55 @@ Moodle numeric version (`$plugin->version` in `version.php`), shown in parenthes
 
 ---
 
+## v1.0.13 — 2026-10-07 (2026100701)
+
+Found by running the plugin against a real Moodle 4.5.15 install rather than static checks.
+
+### Fixed
+
+- **Campion SSO never logged anyone in.** `sso.php` called
+  `\core\session\manager::write_close()` on the line immediately before
+  `complete_user_login()`. That closes the session for writing, so the login was written into
+  an already-closed session: the plugin reported success and recorded an `sso_login` audit
+  entry, but the user was redirected straight back to the Moodle login page. Present since
+  v1.0.0, so single sign-on has never worked in any release. Verified fixed end to end —
+  a provisioned student now arrives, is logged in, and sees their subscribed resource.
+- **`UpdateUser` rejected partial updates once an ACARA allow-list was configured.** A call
+  that did not resend `acaraId` was refused with `422 Unknown ACARA ID` and an empty id,
+  so routine changes such as a year-level rollover failed. The campus is now validated only
+  when the caller actually names one; the stored value is otherwise left alone.
+- **`CreateUser` gave a misleading error when `acaraId` was missing entirely.** It reported
+  the empty value as an unknown ACARA ID. Missing and unrecognised are now distinct faults
+  with distinct messages (`acaraId is required` vs `Unknown ACARA ID for this site`).
+
+### Documentation
+
+- **Corrected an inaccurate claim about auto-created accounts.** The documentation said they
+  were reachable only through Campion SSO. They use `manual` authentication with a random
+  undisclosed password, so no one can sign in with a known password — but on a site with
+  Moodle's forgot-password flow enabled, the address holder can reset it and log in directly.
+  The README now says so and explains how to disable password reset if strict SSO-only access
+  is required. (Moodle's `nologin` method was trialled as a stricter alternative and rejected:
+  `core_user::require_active_user()` treats such accounts as suspended, so login fails
+  outright and SSO breaks.)
+
+---
+
+## v1.0.12 — 2026-10-07 (2026100700)
+
+### Fixed
+
+- **Management page threw "Call to undefined function admin_externalpage_setup()".**
+  `manage.php` calls that function but never required `lib/adminlib.php`, which is not loaded
+  by default. v1.0.11 registered the admin page but did not fix this second fault, so the page
+  was still unreachable — it failed at a different line with a different error.
+  Every file has now been audited for functions that need a non-default library;
+  `manage.php` was the only one affected. (`settings.php` is included by Moodle's admin tree,
+  which already has `adminlib.php` in scope, and `sso.php` loads `user/lib.php` before calling
+  `user_create_user()`.)
+
+---
+
 ## v1.0.11 — 2026-10-06 (2026100600)
 
 ### Fixed

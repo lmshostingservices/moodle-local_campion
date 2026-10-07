@@ -25,8 +25,8 @@
 defined('MOODLE_INTERNAL') || die();
 
 $plugin->component = 'local_campion';
-$plugin->version   = 2026100600;
-$plugin->release   = '1.0.11'; // FIX-ADMIN-PAGE (v1.0.11): The management UI was unreachable — manage.php calls admin_externalpage_setup('local_campion_manage') but settings.php never registered that page, so products, users, subscriptions and logs had no menu entry and could not be opened directly. Registered it and linked it from the settings page. Products can now also be bulk imported by pasting a catalogue table.
+$plugin->version   = 2026100701;
+$plugin->release   = '1.0.13'; // FIX-SSO-SESSION (v1.0.13): SSO never actually logged anyone in — sso.php closed the session with write_close() immediately before complete_user_login(), so the login was written to a closed session and the user was bounced to the login page. Present since 1.0.0. Also: UpdateUser no longer requires acaraId to be resent on a partial update, and auto-created accounts use 'nologin' auth so they cannot bypass SSO via forgot-password.
 $plugin->requires  = 2022041900; // Moodle 4.0+
 $plugin->supported = [400, 500]; // Moodle 4.0 to 5.x
 $plugin->maturity  = MATURITY_STABLE;

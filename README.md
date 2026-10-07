@@ -171,10 +171,20 @@ Users are expected to arrive through SSO, where the signed token is the authenti
 is no password and nothing is emailed.
 
 If the site relies on Campion to provision users outright, enable **Create Moodle accounts on
-first SSO login**. A verified SSO user without a Moodle account then has one created, with no
-usable password, reachable only through SSO. Name fields are taken from the token's name
-claims where present. With the setting off, SSO for an unknown user fails with
-`sso_user_not_found`.
+first SSO login**. A verified SSO user without a Moodle account then has one created, and name
+fields are taken from the token's name claims where present. With the setting off, SSO for an
+unknown user fails with `sso_user_not_found`.
+
+Accounts created this way use Moodle's `manual` authentication with a 32-character random
+password that is never stored or disclosed, so the account cannot be signed into with a
+password anyone knows, and in normal use it is reached only through Campion SSO.
+
+One caveat worth being explicit about: if the site has Moodle's forgot-password flow enabled,
+the holder of the email address can reset that password and sign in directly, bypassing
+Campion. That is usually harmless — they are a legitimate user of the site either way — but if
+the site must be strictly SSO-only, disable password reset for manual accounts at
+**Site administration → Plugins → Authentication → Manage authentication**. Moodle's `nologin`
+method is not an alternative: core treats such accounts as suspended, and login fails.
 
 ---
 
