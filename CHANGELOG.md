@@ -7,6 +7,30 @@ Moodle numeric version (`$plugin->version` in `version.php`), shown in parenthes
 
 ---
 
+## v1.0.11 — 2026-10-06 (2026100600)
+
+### Fixed
+
+- **The management UI was unreachable.** `manage.php` calls
+  `admin_externalpage_setup('local_campion_manage')`, but `settings.php` never registered that
+  external page. With no registration there was no menu entry, and opening the URL directly
+  failed. Products, provisioned users, subscriptions and the activity log have therefore been
+  inaccessible since the plugin's first release. The page is now registered under Local
+  plugins and linked from the settings page.
+
+### Added
+
+- **Bulk product import.** The products tab now accepts a pasted catalogue — one product per
+  line, code and name separated by a tab, comma or run of spaces — instead of one form
+  submission per product. Existing codes are updated rather than duplicated.
+  - Column order is detected rather than assumed: a product code never contains a space and a
+    product name almost always does, so a table pasted name-first (how Campion supplies its
+    catalogue) and one pasted code-first both import correctly.
+  - Lines whose code field is prose, such as a header row, are skipped and reported rather
+    than imported as a mangled product.
+
+---
+
 ## v1.0.10 — 2026-09-24 (2026092400)
 
 ### Fixed

@@ -53,6 +53,8 @@ $string['unlockplugin']             = 'Unlock Campion Integration';
 // Manage page.
 $string['manage']                   = 'Campion Integration Manager';
 $string['manage_heading']           = 'Campion Integration Manager';
+$string['manage_link_text']         = 'Open Campion Manager';
+$string['manage_link_desc']         = 'Register products and ISBNs, view provisioned users and subscriptions, and review the activity log.';
 $string['manage_desc']              = 'Manage Campion Education SSO and provisioning from this page.';
 $string['tab_overview']             = 'Overview';
 $string['tab_users']                = 'Provisioned Users';

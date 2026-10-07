@@ -52,6 +52,89 @@ if ($action === 'save_product' && confirm_sesskey()) {
     redirect(new moodle_url('/local/campion/manage.php', ['tab' => 'products']));
 }
 
+// ── Action: bulk import products ─────────────────────────────────
+// Campion supplies its catalogue as a table, so accept a pasted block rather than forcing
+// one form submission per product. Each line is "<code><tab or comma><name>"; duplicate
+// codes update the existing row rather than erroring.
+if ($action === 'bulk_products' && confirm_sesskey()) {
+    $raw   = optional_param('bulkproducts', '', PARAM_TEXT);
+    $now   = time();
+    $added = 0;
+    $updated = 0;
+    $skipped = [];
+
+    foreach (preg_split('/\r\n|\r|\n/', $raw) as $line) {
+        $line = trim($line);
+        if ($line === '') {
+            continue;
+        }
+
+        // Split on tab, comma or two-or-more spaces — covers a paste from a table,
+        // a spreadsheet or a CSV.
+        $parts = preg_split('/\t|,|\s{2,}/', $line, 2);
+        $first = trim($parts[0]);
+        $second = isset($parts[1]) ? trim($parts[1]) : '';
+
+        // Work out which column is the product code rather than assuming an order: Campion's
+        // own catalogue lists the name first and the code second, while a form entry is the
+        // other way round. A code never contains a space; a product name almost always does.
+        if ($second !== '' && strpos($first, ' ') !== false && strpos($second, ' ') === false) {
+            $rawcode = $second;
+            $rawname = $first;
+        } else {
+            $rawcode = $first;
+            $rawname = $second;
+        }
+
+        $code = clean_param($rawcode, PARAM_ALPHANUMEXT);
+        $name = clean_param($rawname, PARAM_TEXT);
+
+        // A "code" that lost characters to cleaning was prose, not a code — skip the line
+        // rather than inventing a mangled product.
+        if ($code !== $rawcode) {
+            $skipped[] = $line;
+            continue;
+        }
+
+        if ($code === '') {
+            $skipped[] = $line;
+            continue;
+        }
+
+        $existing = $DB->get_record('local_campion_products', ['isbn' => $code]);
+        if ($existing) {
+            if ($name !== '') {
+                $existing->productname = $name;
+            }
+            $existing->status       = 'active';
+            $existing->timemodified = $now;
+            $DB->update_record('local_campion_products', $existing);
+            $updated++;
+        } else {
+            $DB->insert_record('local_campion_products', (object)[
+                'isbn'         => $code,
+                'productname'  => ($name !== '') ? $name : $code,
+                'status'       => 'active',
+                'timecreated'  => $now,
+                'timemodified' => $now,
+            ]);
+            $added++;
+        }
+    }
+
+    $msg = "Products imported: $added added, $updated updated";
+    if (!empty($skipped)) {
+        $msg .= ', ' . count($skipped) . ' line(s) skipped';
+    }
+    redirect(
+        new moodle_url('/local/campion/manage.php', ['tab' => 'products']),
+        $msg,
+        null,
+        empty($skipped) ? \core\output\notification::NOTIFY_SUCCESS
+                        : \core\output\notification::NOTIFY_WARNING
+    );
+}
+
 // ── Credit-unlock gate display ────────────────────────────────────
 $unlocked = local_campion_check_unlock();
 
@@ -224,6 +307,35 @@ if ($tab === 'overview') {
     echo html_writer::empty_tag('input', ['type' => 'text', 'name' => 'productname', 'class' => 'form-control', 'placeholder' => 'e.g. Year 7/8 Student Resources']);
     echo '</div>';
     echo '<button type="submit" class="btn btn-primary">Save Product</button>';
+    echo html_writer::end_tag('form');
+    echo html_writer::end_tag('div');
+    echo html_writer::end_tag('div');
+
+    // Bulk import form.
+    echo html_writer::start_tag('div', ['class' => 'card mb-4']);
+    echo html_writer::start_tag('div', ['class' => 'card-header']);
+    echo html_writer::tag('h5', 'Bulk Import Products', ['class' => 'm-0']);
+    echo html_writer::end_tag('div');
+    echo html_writer::start_tag('div', ['class' => 'card-body']);
+    echo html_writer::tag('p',
+        'Paste the catalogue here, one product per line, as code then name. '
+        . 'Separate the two with a tab, a comma, or two or more spaces — so a block copied '
+        . 'straight out of a spreadsheet or an email table works as-is. '
+        . 'A code that already exists is updated rather than duplicated.',
+        ['class' => 'text-muted']);
+    echo html_writer::start_tag('form', ['method' => 'post', 'action' => '']);
+    echo html_writer::empty_tag('input', ['type' => 'hidden', 'name' => 'sesskey', 'value' => sesskey()]);
+    echo html_writer::empty_tag('input', ['type' => 'hidden', 'name' => 'action',  'value' => 'bulk_products']);
+    echo html_writer::empty_tag('input', ['type' => 'hidden', 'name' => 'tab',     'value' => 'products']);
+    echo html_writer::tag('textarea', '', [
+        'name'        => 'bulkproducts',
+        'class'       => 'form-control',
+        'rows'        => 8,
+        'style'       => 'font-family: monospace;',
+        'placeholder' => "CAMFTG00078ST\tFoodTechGurus - Year 7/8 Student Resources\n"
+                       . "CAMFTG00078TE\tFoodTechGurus - Year 7/8 Teacher Resources",
+    ]);
+    echo '<button type="submit" class="btn btn-primary mt-2">Import Products</button>';
     echo html_writer::end_tag('form');
     echo html_writer::end_tag('div');
     echo html_writer::end_tag('div');

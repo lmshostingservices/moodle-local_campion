@@ -22,6 +22,16 @@ if ($hassiteconfig) {
 
     $ADMIN->add('localplugins', $settings);
 
+    // ── Management page ──────────────────────────────────────────────
+    // manage.php calls admin_externalpage_setup('local_campion_manage'), which requires the
+    // page to be registered here. Without this the whole management UI (products, users,
+    // subscriptions and the activity log) has no menu entry and cannot be opened directly.
+    $ADMIN->add('localplugins', new admin_externalpage(
+        'local_campion_manage',
+        get_string('manage', 'local_campion'),
+        new moodle_url('/local/campion/manage.php')
+    ));
+
     // ── Enable / disable ────────────────────────────────────────────
     $settings->add(new admin_setting_configcheckbox(
         'local_campion/enabled',
@@ -111,6 +121,15 @@ if ($hassiteconfig) {
     global $CFG;
     $sso_url      = $CFG->wwwroot . '/local/campion/sso.php';
     $api_url      = $CFG->wwwroot . '/local/campion/api.php';
+
+    $manage_url = new moodle_url('/local/campion/manage.php');
+    $settings->add(new admin_setting_description(
+        'local_campion/manage_link',
+        get_string('manage', 'local_campion'),
+        html_writer::link($manage_url, get_string('manage_link_text', 'local_campion'),
+            ['class' => 'btn btn-primary']) .
+        '<br><small>' . get_string('manage_link_desc', 'local_campion') . '</small>'
+    ));
 
     $settings->add(new admin_setting_description(
         'local_campion/sso_endpoint_info',
