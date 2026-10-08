@@ -25,8 +25,8 @@
 defined('MOODLE_INTERNAL') || die();
 
 $plugin->component = 'local_campion';
-$plugin->version   = 2026100701;
-$plugin->release   = '1.0.13'; // FIX-SSO-SESSION (v1.0.13): SSO never actually logged anyone in — sso.php closed the session with write_close() immediately before complete_user_login(), so the login was written to a closed session and the user was bounced to the login page. Present since 1.0.0. Also: UpdateUser no longer requires acaraId to be resent on a partial update, and auto-created accounts use 'nologin' auth so they cannot bypass SSO via forgot-password.
+$plugin->version   = 2026100702;
+$plugin->release   = '1.0.14'; // DIAGNOSE-ACTIVATION (v1.0.14): "Campion Integration is not activated" could mean missing credentials, an unreachable licence server, or a genuine lock, with no way to tell them apart. The blocked admin page now states which, and Ping reports the same detail over the API (which has no credit gate), so activation can be diagnosed even when every gated page is blocked. Secrets are masked.
 $plugin->requires  = 2022041900; // Moodle 4.0+
 $plugin->supported = [400, 500]; // Moodle 4.0 to 5.x
 $plugin->maturity  = MATURITY_STABLE;

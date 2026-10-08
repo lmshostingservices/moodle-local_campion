@@ -431,6 +431,9 @@ function api_ping($data, $rawbody, $jsonerror) {
             'product_catalogue' => $DB->count_records('local_campion_products'),
             'allowed_acara_ids' => local_campion_get_allowed_acara_ids(),
         ],
+        // Why the admin and student pages are or are not activated. The provisioning API has
+        // no credit gate of its own, so this is reachable even when those pages are blocked.
+        'activation'      => local_campion_unlock_diagnostic(),
     ]);
 }
 

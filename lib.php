@@ -294,6 +294,117 @@ function local_campion_validate_isbn($isbn) {
 }
 
 /**
+ * Explain, step by step, why the credit-unlock check passes or fails.
+ *
+ * local_campion_check_unlock() returns only true or false, and the three ways it can fail —
+ * no credentials, the licence server unreachable, or the server reporting the plugin locked —
+ * all surface to the admin as the same "not activated" message. That makes a genuine
+ * configuration problem indistinguishable from an outage.
+ *
+ * This runs the same sequence and reports what happened at each step. Secrets are masked:
+ * only whether a value is present, and its first few characters, are ever returned.
+ *
+ * @return array Diagnostic detail, safe to return over the provisioning API
+ */
+function local_campion_unlock_diagnostic() {
+    $siteid = local_campion_get_siteid();
+    $apikey = local_campion_get_apikey();
+
+    $out = [
+        'site_id'     => [
+            'present' => !empty($siteid),
+            'source'  => !empty(get_config('local_aiconfig', 'siteid')) ? 'local_aiconfig'
+                       : (!empty(get_config('local_campion', 'siteid')) ? 'local_campion' : 'none'),
+            'preview' => !empty($siteid) ? substr((string)$siteid, 0, 8) . '…' : null,
+        ],
+        'api_key'     => [
+            'present' => !empty($apikey),
+            'source'  => !empty(get_config('local_aiconfig', 'apikey')) ? 'local_aiconfig'
+                       : (!empty(get_config('local_campion', 'apikey')) ? 'local_campion' : 'none'),
+            'preview' => !empty($apikey) ? substr((string)$apikey, 0, 8) . '…' : null,
+        ],
+        'server_call' => null,
+        'unlocked'    => false,
+        'verdict'     => null,
+    ];
+
+    if (empty($siteid) || empty($apikey)) {
+        $missing = [];
+        if (empty($siteid)) {
+            $missing[] = 'Site ID';
+        }
+        if (empty($apikey)) {
+            $missing[] = 'API key';
+        }
+        $out['verdict'] = 'Not activated because ' . implode(' and ', $missing)
+                        . (count($missing) > 1 ? ' are' : ' is')
+                        . ' not configured. The licence server was never contacted. '
+                        . 'Set these in the AI Config (local_aiconfig) plugin.';
+        return $out;
+    }
+
+    $url = 'https://lms-labs.com/api/plugin-unlock/verify?pluginId=campion'
+        . '&siteId=' . rawurlencode($siteid)
+        . '&apiKey=' . rawurlencode($apikey);
+
+    $response = false;
+    $httpcode = 0;
+    $curlerror = null;
+
+    if (function_exists('curl_init')) {
+        $ch = curl_init($url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+        $response = curl_exec($ch);
+        $httpcode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        if ($response === false) {
+            $curlerror = curl_error($ch);
+        }
+        curl_close($ch);
+    } else {
+        $ctx = stream_context_create(['http' => ['timeout' => 10]]);
+        $response = @file_get_contents($url, false, $ctx);
+    }
+
+    $decoded = is_string($response) ? json_decode($response, true) : null;
+
+    $out['server_call'] = [
+        'endpoint'    => 'https://lms-labs.com/api/plugin-unlock/verify',
+        'plugin_id'   => 'campion',
+        'http_status' => $httpcode,
+        'reachable'   => ($httpcode > 0),
+        'curl_error'  => $curlerror,
+        'response'    => is_array($decoded) ? $decoded
+                       : (is_string($response) ? substr($response, 0, 200) : null),
+    ];
+
+    if ($httpcode === 0) {
+        $out['verdict'] = 'Not activated because the Moodle server could not reach '
+                        . 'lms-labs.com at all. This is an outbound network or DNS problem on '
+                        . 'the Moodle server, not a licensing one.'
+                        . ($curlerror ? ' Error: ' . $curlerror : '');
+        return $out;
+    }
+
+    if ($httpcode !== 200) {
+        $out['verdict'] = 'Not activated because the licence server answered HTTP ' . $httpcode
+                        . ' rather than 200. Credentials were sent, so check whether the Site ID '
+                        . 'and API key match a client record on lms-labs.com.';
+        return $out;
+    }
+
+    $out['unlocked'] = !empty($decoded['unlocked']);
+    $out['verdict']  = $out['unlocked']
+        ? 'Activated. The licence server confirms this plugin is unlocked for this site.'
+        : 'Not activated because the licence server answered successfully but reported the '
+        . 'plugin as locked for this site. The credentials are valid — the campion plugin '
+        . 'itself needs unlocking for this client in the Plugin Manager.';
+
+    return $out;
+}
+
+/**
  * Whether ISBN check-digit validation is switched on.
  *
  * A Moodle admin_setting_configcheckbox default is only written to config when an

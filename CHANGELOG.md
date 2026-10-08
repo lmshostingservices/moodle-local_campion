@@ -7,6 +7,24 @@ Moodle numeric version (`$plugin->version` in `version.php`), shown in parenthes
 
 ---
 
+## v1.0.14 — 2026-10-07 (2026100702)
+
+### Added
+
+- **Activation diagnostics.** The credit-unlock check has three distinct failure modes —
+  credentials not configured, the licence server unreachable, and the server reporting the
+  plugin locked — which all produced the identical "Campion Integration is not activated"
+  message. A configuration mistake was therefore indistinguishable from an outage.
+  - The blocked manager page now states which check failed, whether the Site ID and API key
+    are configured and which plugin they came from, and the HTTP status of the licence call.
+  - `Ping` returns the same detail under `activation`. The provisioning API has no credit
+    gate, so activation can be diagnosed from one request even when every gated page is
+    blocked.
+  - Secrets are masked throughout: only presence, source and the first eight characters are
+    ever reported.
+
+---
+
 ## v1.0.13 — 2026-10-07 (2026100701)
 
 Found by running the plugin against a real Moodle 4.5.15 install rather than static checks.

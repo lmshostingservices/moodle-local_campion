@@ -144,6 +144,32 @@ echo $OUTPUT->heading(get_string('manage_heading', 'local_campion'));
 
 if (!$unlocked) {
     echo $OUTPUT->notification(get_string('notunlocked', 'local_campion'), 'error');
+
+    // Say which of the three checks failed. "Not activated" alone is indistinguishable
+    // between missing credentials, an unreachable licence server, and a genuine lock.
+    $diag = local_campion_unlock_diagnostic();
+    echo html_writer::start_tag('div', ['class' => 'alert alert-info']);
+    echo html_writer::tag('strong', 'Diagnosis: ') . htmlspecialchars($diag['verdict']);
+    echo html_writer::start_tag('ul', ['class' => 'mt-2 mb-0']);
+    echo html_writer::tag('li', 'Site ID: ' . ($diag['site_id']['present']
+        ? 'configured (' . htmlspecialchars((string)$diag['site_id']['preview']) . ' from '
+          . htmlspecialchars($diag['site_id']['source']) . ')'
+        : '<strong>not configured</strong>'));
+    echo html_writer::tag('li', 'API key: ' . ($diag['api_key']['present']
+        ? 'configured (' . htmlspecialchars((string)$diag['api_key']['preview']) . ' from '
+          . htmlspecialchars($diag['api_key']['source']) . ')'
+        : '<strong>not configured</strong>'));
+    if (!empty($diag['server_call'])) {
+        echo html_writer::tag('li', 'Licence server: HTTP '
+            . (int)$diag['server_call']['http_status']
+            . ($diag['server_call']['curl_error']
+                ? ' — ' . htmlspecialchars((string)$diag['server_call']['curl_error']) : ''));
+    } else {
+        echo html_writer::tag('li', 'Licence server: not contacted');
+    }
+    echo html_writer::end_tag('ul');
+    echo html_writer::end_tag('div');
+
     echo $OUTPUT->footer();
     exit;
 }
