@@ -7,6 +7,71 @@ Moodle numeric version (`$plugin->version` in `version.php`), shown in parenthes
 
 ---
 
+## v1.0.16 — 2026-10-08 (2026100801)
+
+Responds to the LMS Labs activation handover. The Food Tech Gurus site's own problem was a
+missing entitlement record, resolved server-side by an administrator grant; the changes here
+are about making future activations legible rather than fixing that.
+
+### Fixed
+
+- **Reverted the v1.0.15 dual plugin-id lookup.** v1.0.15 guessed that the licence server was
+  keyed by `local_campion` while the plugin asked about `campion`. That was wrong: `campion`
+  is the short id and `local_campion` is the component, as the handover confirms. The lookup
+  is a single query under `campion` again.
+
+### Security
+
+- **The API key is no longer sent in the URL.** It now travels in an `Authorization: Bearer`
+  header, so it cannot reach web server logs, proxy logs or browser history.
+- **No part of the API key appears in output.** The diagnostic previously showed the first
+  eight characters. It now reports only whether a credential is present and which plugin it
+  came from.
+
+### Changed
+
+- **The activation check distinguishes five states** rather than reporting everything as "not
+  activated":
+  - missing credentials — configure AI Central Config
+  - invalid credentials (HTTP 401/403) — correct them; explicitly *not* something to fix by
+    purchasing again, since the account may already hold an entitlement
+  - HTTP 200 with `unlocked: false` — no entitlement found for the configured account
+  - HTTP 200 with `unlocked: true` — activated
+  - timeout, unexpected status or unparseable body — **could not be verified**, which is
+    stated as distinct from being unlicensed
+  Access still fails closed in every non-activated case; the distinction governs what the
+  administrator is told, not what they can reach.
+- **Added "Check licence status again"**, which forces a fresh query rather than reusing the
+  per-request cache. The page states that checking status never purchases a licence and never
+  spends credits.
+
+### Notes
+
+- This plugin contains no purchase flow: its only outbound licence call is the read-only
+  `GET /api/plugin-unlock/verify`. The handover's requirements about price confirmation,
+  `expectedCredits`, duplicate charges and purchase retries therefore have nothing to apply to
+  here — they belong to the shared acquisition flow in the Plugin Manager, which this release
+  does not touch.
+
+---
+
+## v1.0.15 — 2026-10-08 (2026100800)
+
+### Fixed
+
+- **The unlock check could report a plugin as locked that had been unlocked.** It asked the
+  licence server about `pluginId=campion`, but the plugin's Moodle component is
+  `local_campion` and the LMS Labs catalogue keys releases by the full component name. If the
+  unlock record is stored under `local_campion`, a query for `campion` finds nothing and the
+  server answers "locked" — indistinguishable from a genuine lock. The check now tries
+  `local_campion` first and falls back to `campion`, so it works under either convention
+  without a server change. The second request is only made when the first says no.
+- The activation diagnostic now reports each attempt separately — the id asked, the HTTP
+  status, and the server's actual answer — so a naming mismatch is visible rather than
+  inferred.
+
+---
+
 ## v1.0.14 — 2026-10-07 (2026100702)
 
 ### Added

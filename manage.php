@@ -137,37 +137,49 @@ if ($action === 'bulk_products' && confirm_sesskey()) {
 }
 
 // ── Credit-unlock gate display ────────────────────────────────────
-$unlocked = local_campion_check_unlock();
+// "Check licence status again" must really re-query. check_unlock() memoises per request,
+// which is fine, but an admin pressing re-check after fixing something upstream needs a
+// genuine round trip rather than a repeat of the previous answer.
+$recheck = optional_param('recheck', 0, PARAM_BOOL);
+$unlocked = local_campion_check_unlock($recheck);
 
 echo $OUTPUT->header();
 echo $OUTPUT->heading(get_string('manage_heading', 'local_campion'));
 
 if (!$unlocked) {
-    echo $OUTPUT->notification(get_string('notunlocked', 'local_campion'), 'error');
-
-    // Say which of the three checks failed. "Not activated" alone is indistinguishable
-    // between missing credentials, an unreachable licence server, and a genuine lock.
     $diag = local_campion_unlock_diagnostic();
+
+    // Distinguish the activation states. "Could not verify" is not "unlicensed", and a
+    // credentials problem must not be presented as something a purchase would fix.
+    $style = ($diag['state'] === 'unverified') ? 'warning' : 'error';
+    echo $OUTPUT->notification($diag['headline'], $style);
+
     echo html_writer::start_tag('div', ['class' => 'alert alert-info']);
-    echo html_writer::tag('strong', 'Diagnosis: ') . htmlspecialchars($diag['verdict']);
-    echo html_writer::start_tag('ul', ['class' => 'mt-2 mb-0']);
+    if (!empty($diag['action'])) {
+        echo html_writer::tag('p', html_writer::tag('strong', 'What to do: ') . $diag['action']);
+    }
+    echo html_writer::start_tag('ul', ['class' => 'mb-2']);
     echo html_writer::tag('li', 'Site ID: ' . ($diag['site_id']['present']
-        ? 'configured (' . htmlspecialchars((string)$diag['site_id']['preview']) . ' from '
-          . htmlspecialchars($diag['site_id']['source']) . ')'
+        ? 'configured (from ' . htmlspecialchars($diag['site_id']['source']) . ')'
         : '<strong>not configured</strong>'));
     echo html_writer::tag('li', 'API key: ' . ($diag['api_key']['present']
-        ? 'configured (' . htmlspecialchars((string)$diag['api_key']['preview']) . ' from '
-          . htmlspecialchars($diag['api_key']['source']) . ')'
+        ? 'configured (from ' . htmlspecialchars($diag['api_key']['source']) . ')'
         : '<strong>not configured</strong>'));
-    if (!empty($diag['server_call'])) {
-        echo html_writer::tag('li', 'Licence server: HTTP '
-            . (int)$diag['server_call']['http_status']
-            . ($diag['server_call']['curl_error']
-                ? ' — ' . htmlspecialchars((string)$diag['server_call']['curl_error']) : ''));
-    } else {
-        echo html_writer::tag('li', 'Licence server: not contacted');
-    }
+    echo html_writer::tag('li', 'Plugin ID queried: ' . htmlspecialchars($diag['plugin_id'])
+        . ' (component local_campion)');
+    echo html_writer::tag('li', 'Licence server: '
+        . ($diag['http_status'] === null ? 'not contacted' : 'HTTP ' . (int)$diag['http_status']));
     echo html_writer::end_tag('ul');
+
+    // Re-checking status is a GET against the licence server. It cannot spend credits, and
+    // the wording avoids implying that it buys anything.
+    $recheck = new moodle_url('/local/campion/manage.php', ['recheck' => 1]);
+    echo html_writer::link($recheck, 'Check licence status again',
+        ['class' => 'btn btn-secondary btn-sm']);
+    echo html_writer::tag('p',
+        'Checking status never purchases a licence and never spends credits. '
+        . 'Entitlements are granted in the LMS Labs Plugin Manager.',
+        ['class' => 'text-muted mt-2 mb-0']);
     echo html_writer::end_tag('div');
 
     echo $OUTPUT->footer();

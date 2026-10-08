@@ -25,8 +25,8 @@
 defined('MOODLE_INTERNAL') || die();
 
 $plugin->component = 'local_campion';
-$plugin->version   = 2026100702;
-$plugin->release   = '1.0.14'; // DIAGNOSE-ACTIVATION (v1.0.14): "Campion Integration is not activated" could mean missing credentials, an unreachable licence server, or a genuine lock, with no way to tell them apart. The blocked admin page now states which, and Ping reports the same detail over the API (which has no credit gate), so activation can be diagnosed even when every gated page is blocked. Secrets are masked.
+$plugin->version   = 2026100801;
+$plugin->release   = '1.0.16'; // ACTIVATION-STATES (v1.0.16): Reverted the v1.0.15 dual plugin-id guess — 'campion' is the correct short id, 'local_campion' the component. The API key now travels in an Authorization: Bearer header instead of the query string, and no part of it appears in any page, response or log. The activation check distinguishes five states (missing credentials, invalid credentials, no entitlement, activated, could-not-verify) so an unreachable server is no longer reported as 'unlicensed', and a credentials fault is not presented as something a purchase would fix. Added a Check licence status action that forces a fresh query; it is a GET and spends no credits.
 $plugin->requires  = 2022041900; // Moodle 4.0+
 $plugin->supported = [400, 500]; // Moodle 4.0 to 5.x
 $plugin->maturity  = MATURITY_STABLE;

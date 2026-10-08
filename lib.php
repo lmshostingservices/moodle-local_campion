@@ -55,9 +55,9 @@ function local_campion_get_apikey() {
  *
  * @return bool
  */
-function local_campion_check_unlock() {
+function local_campion_check_unlock($forcerecheck = false) {
     static $cache = null;
-    if ($cache !== null) {
+    if ($cache !== null && !$forcerecheck) {
         return $cache;
     }
 
@@ -69,40 +69,100 @@ function local_campion_check_unlock() {
         return false;
     }
 
-    $url = 'https://lms-labs.com/api/plugin-unlock/verify?pluginId=campion'
-        . '&siteId=' . rawurlencode($siteid)
-        . '&apiKey=' . rawurlencode($apikey);
-
     \core\session\manager::write_close();
 
+    // Fails closed: anything other than a confirmed unlock denies access. The distinction
+    // between "confirmed locked" and "could not verify" governs what the administrator is
+    // told, not what they can reach — see local_campion_unlock_diagnostic().
+    $result = local_campion_query_unlock($siteid, $apikey);
+    $cache = ($result['state'] === 'activated');
+
+    return $cache;
+}
+
+/**
+ * The short plugin identifier the licence server knows this plugin by.
+ *
+ * Deliberately the bare name, not the Moodle component: the LMS Labs contract is that
+ * 'campion' is the short id and 'local_campion' is its component.
+ *
+ * @return string
+ */
+function local_campion_unlock_plugin_id() {
+    return 'campion';
+}
+
+/**
+ * Ask the licence server whether this plugin is unlocked for this site.
+ *
+ * A status check only: a GET that spends no credits and must never become a purchase. The
+ * API key travels in the Authorization header rather than the query string, so it cannot
+ * reach web server logs, proxy logs or browser history.
+ *
+ * @param  string $siteid
+ * @param  string $apikey
+ * @return array  ['state' => string, 'http_code' => int, 'error' => ?string]
+ *                state: activated | not_entitled | invalid_credentials | unverified
+ */
+function local_campion_query_unlock($siteid, $apikey) {
+    $url = 'https://lms-labs.com/api/plugin-unlock/verify'
+        . '?pluginId=' . rawurlencode(local_campion_unlock_plugin_id())
+        . '&siteId=' . rawurlencode($siteid);
+
     $response = false;
-    $http_code = 0;
+    $httpcode = 0;
+    $error = null;
 
     if (function_exists('curl_init')) {
         $ch = curl_init($url);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_TIMEOUT, 10);
         curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-        $response  = curl_exec($ch);
-        $http_code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, [
+            'Authorization: Bearer ' . $apikey,
+            'Accept: application/json',
+        ]);
+        $response = curl_exec($ch);
+        $httpcode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        if ($response === false) {
+            $error = curl_error($ch);
+        }
         curl_close($ch);
     } else {
-        $ctx = stream_context_create(['http' => ['timeout' => 10]]);
+        $ctx = stream_context_create(['http' => [
+            'method'        => 'GET',
+            'header'        => "Authorization: Bearer " . $apikey . "\r\nAccept: application/json\r\n",
+            'timeout'       => 10,
+            'ignore_errors' => true,
+        ]]);
         $response = @file_get_contents($url, false, $ctx);
         if ($response !== false && isset($http_response_header)) {
-            preg_match('/HTTP\/\S+\s+(\d+)/', $http_response_header[0], $m);
-            $http_code = isset($m[1]) ? (int)$m[1] : 0;
+            preg_match('/HTTP\\/\\S+\\s+(\\d+)/', $http_response_header[0], $m);
+            $httpcode = isset($m[1]) ? (int)$m[1] : 0;
         }
     }
 
-    if ($http_code !== 200 || !$response) {
-        $cache = false;
-        return false;
+    $decoded = is_string($response) ? json_decode($response, true) : null;
+
+    // Classify. An unreachable server, an unexpected status or a body we cannot parse all mean
+    // "could not verify" — which is NOT the same as "confirmed unlicensed".
+    if ($httpcode === 0) {
+        $state = 'unverified';
+    } else if ($httpcode === 401 || $httpcode === 403) {
+        $state = 'invalid_credentials';
+    } else if ($httpcode !== 200) {
+        $state = 'unverified';
+    } else if (!is_array($decoded) || !array_key_exists('unlocked', $decoded)) {
+        $state = 'unverified';
+    } else {
+        $state = !empty($decoded['unlocked']) ? 'activated' : 'not_entitled';
     }
 
-    $data  = json_decode($response, true);
-    $cache = !empty($data['unlocked']);
-    return $cache;
+    return [
+        'state'     => $state,
+        'http_code' => $httpcode,
+        'error'     => $error,
+    ];
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -310,22 +370,24 @@ function local_campion_unlock_diagnostic() {
     $siteid = local_campion_get_siteid();
     $apikey = local_campion_get_apikey();
 
+    // Reports whether credentials exist and where they came from, never any part of their
+    // value. A key fragment in an admin page, a JSON response or a log is still a leak.
     $out = [
+        'state'       => null,
         'site_id'     => [
             'present' => !empty($siteid),
             'source'  => !empty(get_config('local_aiconfig', 'siteid')) ? 'local_aiconfig'
                        : (!empty(get_config('local_campion', 'siteid')) ? 'local_campion' : 'none'),
-            'preview' => !empty($siteid) ? substr((string)$siteid, 0, 8) . '…' : null,
         ],
         'api_key'     => [
             'present' => !empty($apikey),
             'source'  => !empty(get_config('local_aiconfig', 'apikey')) ? 'local_aiconfig'
                        : (!empty(get_config('local_campion', 'apikey')) ? 'local_campion' : 'none'),
-            'preview' => !empty($apikey) ? substr((string)$apikey, 0, 8) . '…' : null,
         ],
-        'server_call' => null,
-        'unlocked'    => false,
-        'verdict'     => null,
+        'plugin_id'   => local_campion_unlock_plugin_id(),
+        'http_status' => null,
+        'headline'    => null,
+        'action'      => null,
     ];
 
     if (empty($siteid) || empty($apikey)) {
@@ -336,70 +398,49 @@ function local_campion_unlock_diagnostic() {
         if (empty($apikey)) {
             $missing[] = 'API key';
         }
-        $out['verdict'] = 'Not activated because ' . implode(' and ', $missing)
-                        . (count($missing) > 1 ? ' are' : ' is')
-                        . ' not configured. The licence server was never contacted. '
-                        . 'Set these in the AI Config (local_aiconfig) plugin.';
+        $out['state']    = 'missing_credentials';
+        $out['headline'] = implode(' and ', $missing) . (count($missing) > 1 ? ' are' : ' is')
+                         . ' not configured, so the licence server was never contacted.';
+        $out['action']   = 'Configure the AI Central Config (local_aiconfig) plugin with this '
+                         . "site's Site ID and API key.";
         return $out;
     }
 
-    $url = 'https://lms-labs.com/api/plugin-unlock/verify?pluginId=campion'
-        . '&siteId=' . rawurlencode($siteid)
-        . '&apiKey=' . rawurlencode($apikey);
+    $r = local_campion_query_unlock($siteid, $apikey);
+    $out['state']       = $r['state'];
+    $out['http_status'] = $r['http_code'];
 
-    $response = false;
-    $httpcode = 0;
-    $curlerror = null;
+    switch ($r['state']) {
+        case 'activated':
+            $out['headline'] = 'Activated. The licence server confirms an entitlement for this site.';
+            break;
 
-    if (function_exists('curl_init')) {
-        $ch = curl_init($url);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-        $response = curl_exec($ch);
-        $httpcode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        if ($response === false) {
-            $curlerror = curl_error($ch);
-        }
-        curl_close($ch);
-    } else {
-        $ctx = stream_context_create(['http' => ['timeout' => 10]]);
-        $response = @file_get_contents($url, false, $ctx);
+        case 'not_entitled':
+            $out['headline'] = 'No Campion entitlement was found for the configured account.';
+            $out['action']   = 'Unlock Campion for this site in the Plugin Manager. Checking '
+                             . 'status here does not purchase a licence, and nothing has been '
+                             . 'charged.';
+            break;
+
+        case 'invalid_credentials':
+            $out['headline'] = 'The licence server rejected the configured credentials (HTTP '
+                             . (int)$r['http_code'] . ').';
+            $out['action']   = 'Correct the Site ID and API key in AI Central Config. Do not '
+                             . 'purchase another licence to resolve this — the account may '
+                             . 'already hold one.';
+            break;
+
+        case 'unverified':
+        default:
+            $out['headline'] = 'Licence status could not be verified'
+                             . ($r['http_code'] ? ' (HTTP ' . (int)$r['http_code'] . ')' : '')
+                             . ($r['error'] ? ': ' . $r['error'] : '')
+                             . '. This is not the same as being unlicensed.';
+            $out['action']   = 'Check that this server can reach lms-labs.com, then check the '
+                             . 'status again. Access stays closed until the status is '
+                             . 'confirmed, but no entitlement has been lost.';
+            break;
     }
-
-    $decoded = is_string($response) ? json_decode($response, true) : null;
-
-    $out['server_call'] = [
-        'endpoint'    => 'https://lms-labs.com/api/plugin-unlock/verify',
-        'plugin_id'   => 'campion',
-        'http_status' => $httpcode,
-        'reachable'   => ($httpcode > 0),
-        'curl_error'  => $curlerror,
-        'response'    => is_array($decoded) ? $decoded
-                       : (is_string($response) ? substr($response, 0, 200) : null),
-    ];
-
-    if ($httpcode === 0) {
-        $out['verdict'] = 'Not activated because the Moodle server could not reach '
-                        . 'lms-labs.com at all. This is an outbound network or DNS problem on '
-                        . 'the Moodle server, not a licensing one.'
-                        . ($curlerror ? ' Error: ' . $curlerror : '');
-        return $out;
-    }
-
-    if ($httpcode !== 200) {
-        $out['verdict'] = 'Not activated because the licence server answered HTTP ' . $httpcode
-                        . ' rather than 200. Credentials were sent, so check whether the Site ID '
-                        . 'and API key match a client record on lms-labs.com.';
-        return $out;
-    }
-
-    $out['unlocked'] = !empty($decoded['unlocked']);
-    $out['verdict']  = $out['unlocked']
-        ? 'Activated. The licence server confirms this plugin is unlocked for this site.'
-        : 'Not activated because the licence server answered successfully but reported the '
-        . 'plugin as locked for this site. The credentials are valid — the campion plugin '
-        . 'itself needs unlocking for this client in the Plugin Manager.';
 
     return $out;
 }

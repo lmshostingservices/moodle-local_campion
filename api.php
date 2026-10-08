@@ -433,6 +433,7 @@ function api_ping($data, $rawbody, $jsonerror) {
         ],
         // Why the admin and student pages are or are not activated. The provisioning API has
         // no credit gate of its own, so this is reachable even when those pages are blocked.
+        // Reports presence and source of credentials only — never any part of their value.
         'activation'      => local_campion_unlock_diagnostic(),
     ]);
 }
