@@ -446,6 +446,141 @@ function local_campion_unlock_diagnostic() {
 }
 
 /**
+ * Fetch and cache the provider's OpenID Connect discovery document.
+ *
+ * The plugin previously assumed /oauth/token and /oauth/authorize. Campion IAM actually serves
+ * /resource/oauth2/token and /resource/oauth2/authorise — note the British spelling — so those
+ * guesses could never have worked. Rather than hard-code a second set of guesses, read the
+ * endpoints the provider publishes. This also survives the provider moving them.
+ *
+ * Cached for an hour in plugin config; a failed fetch is not cached, so a transient outage
+ * does not pin the plugin to the fallbacks.
+ *
+ * @param  bool  $forcerefresh Ignore the cache and re-fetch
+ * @return array ['token_endpoint' => ?string, 'authorization_endpoint' => ?string,
+ *                'source' => 'discovery'|'cache'|'fallback', 'error' => ?string]
+ */
+function local_campion_discover_endpoints($forcerefresh = false) {
+    $iamurl = local_campion_get_iam_url();
+
+    $fallback = [
+        'token_endpoint'         => $iamurl . '/oauth/token',
+        'authorization_endpoint' => $iamurl . '/oauth/authorize',
+        'source'                 => 'fallback',
+        'error'                  => null,
+    ];
+
+    if (empty($iamurl)) {
+        $fallback['error'] = 'No IAM URL configured';
+        return $fallback;
+    }
+
+    // Serve from cache unless it is stale or a refresh was asked for.
+    $cached = get_config('local_campion', 'oidc_cache');
+    $cachedat = (int)get_config('local_campion', 'oidc_cache_time');
+    $cachedfor = (string)get_config('local_campion', 'oidc_cache_iam');
+
+    if (!$forcerefresh && !empty($cached) && $cachedfor === $iamurl
+            && (time() - $cachedat) < HOURSECS) {
+        $decoded = json_decode($cached, true);
+        if (is_array($decoded) && !empty($decoded['token_endpoint'])) {
+            $decoded['source'] = 'cache';
+            $decoded['error'] = null;
+            return $decoded;
+        }
+    }
+
+    $url = $iamurl . '/.well-known/openid-configuration';
+    $response = false;
+    $httpcode = 0;
+    $error = null;
+
+    if (function_exists('curl_init')) {
+        $ch = curl_init($url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, ['Accept: application/json']);
+        $response = curl_exec($ch);
+        $httpcode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        if ($response === false) {
+            $error = curl_error($ch);
+        }
+        curl_close($ch);
+    } else {
+        $ctx = stream_context_create(['http' => ['timeout' => 10, 'ignore_errors' => true]]);
+        $response = @file_get_contents($url, false, $ctx);
+        if ($response !== false && isset($http_response_header)) {
+            preg_match('/HTTP\/\S+\s+(\d+)/', $http_response_header[0], $m);
+            $httpcode = isset($m[1]) ? (int)$m[1] : 0;
+        }
+    }
+
+    $doc = is_string($response) ? json_decode($response, true) : null;
+
+    if ($httpcode !== 200 || !is_array($doc) || empty($doc['token_endpoint'])) {
+        $fallback['error'] = 'Discovery failed (HTTP ' . $httpcode . ')'
+                           . ($error ? ': ' . $error : '')
+                           . '. Falling back to the assumed endpoint paths, which may not be '
+                           . 'the ones this provider uses.';
+        return $fallback;
+    }
+
+    $result = [
+        'token_endpoint'         => $doc['token_endpoint'],
+        'authorization_endpoint' => !empty($doc['authorization_endpoint'])
+                                  ? $doc['authorization_endpoint']
+                                  : $fallback['authorization_endpoint'],
+        'source'                 => 'discovery',
+        'error'                  => null,
+    ];
+
+    set_config('oidc_cache', json_encode($result), 'local_campion');
+    set_config('oidc_cache_time', time(), 'local_campion');
+    set_config('oidc_cache_iam', $iamurl, 'local_campion');
+
+    return $result;
+}
+
+/**
+ * Report the SSO configuration, including the endpoints actually derived from it.
+ *
+ * The IAM URL is a base. Endpoints come from the provider's OIDC discovery document, so this
+ * reports which ones are actually in use and whether they were discovered or fallen back to.
+ * A value pasted with a path already on it breaks discovery too, so that is still flagged.
+ * No secret values are included.
+ *
+ * @return array
+ */
+function local_campion_sso_config_report() {
+    $iamurl = local_campion_get_iam_url();
+    $parts  = parse_url($iamurl);
+    $path   = isset($parts['path']) ? trim($parts['path'], '/') : '';
+
+    global $CFG;
+
+    $endpoints = local_campion_discover_endpoints();
+
+    return [
+        'iam_url'            => $iamurl,
+        'endpoint_source'    => $endpoints['source'],
+        'discovery_error'    => $endpoints['error'],
+        'token_endpoint'     => $endpoints['token_endpoint'],
+        'authorize_endpoint' => $endpoints['authorization_endpoint'],
+        'redirect_uri'       => $CFG->wwwroot . '/local/campion/sso.php',
+        'client_id_present'  => !empty(local_campion_get_client_id()),
+        'client_secret_set'  => !empty(local_campion_get_client_secret()),
+        'sso_autocreate'     => (bool)get_config('local_campion', 'sso_autocreate'),
+        'warning'            => ($path !== '')
+            ? 'The IAM URL contains a path ("/' . $path . '"). It should be the base URL only, '
+            . 'for example https://iam.campion.com.au — the plugin appends '
+            . '/.well-known/openid-configuration itself to discover the real OAuth endpoints. '
+            . 'A path here breaks discovery and SSO fails.'
+            : null,
+    ];
+}
+
+/**
  * Whether ISBN check-digit validation is switched on.
  *
  * A Moodle admin_setting_configcheckbox default is only written to config when an
@@ -582,7 +717,9 @@ function local_campion_build_auth_url($email, $state, $redirecturi) {
         'login_hint'    => $email,
     ];
 
-    return $iam_url . '/oauth/authorize?' . http_build_query($params);
+    $endpoints = local_campion_discover_endpoints();
+
+    return $endpoints['authorization_endpoint'] . '?' . http_build_query($params);
 }
 
 /**
@@ -592,52 +729,87 @@ function local_campion_build_auth_url($email, $state, $redirecturi) {
  * @param  string      $redirecturi Our callback URL
  * @return array|false              Token response array, or false on failure
  */
-function local_campion_exchange_code($code, $redirecturi) {
-    $iam_url       = local_campion_get_iam_url();
-    $client_id     = local_campion_get_client_id();
-    $client_secret = local_campion_get_client_secret();
+function local_campion_exchange_code($code, $redirecturi, &$failure = null) {
+    $iamurl       = local_campion_get_iam_url();
+    $clientid     = local_campion_get_client_id();
+    $clientsecret = local_campion_get_client_secret();
 
-    $post_data = http_build_query([
+    $failure = null;
+
+    $postdata = http_build_query([
         'grant_type'    => 'authorization_code',
         'code'          => $code,
         'redirect_uri'  => $redirecturi,
-        'client_id'     => $client_id,
-        'client_secret' => $client_secret,
+        'client_id'     => $clientid,
+        'client_secret' => $clientsecret,
     ]);
 
-    $token_url = $iam_url . '/oauth/token';
+    $endpoints = local_campion_discover_endpoints();
+    $tokenurl  = $endpoints['token_endpoint'];
+
+    $response = false;
+    $httpcode = 0;
+    $curlerror = null;
 
     if (function_exists('curl_init')) {
-        $ch = curl_init($token_url);
+        $ch = curl_init($tokenurl);
         curl_setopt($ch, CURLOPT_POST, true);
-        curl_setopt($ch, CURLOPT_POSTFIELDS, $post_data);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, $postdata);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_TIMEOUT, 15);
         curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
         curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/x-www-form-urlencoded']);
-        $response  = curl_exec($ch);
-        $http_code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $response = curl_exec($ch);
+        $httpcode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        if ($response === false) {
+            $curlerror = curl_error($ch);
+        }
         curl_close($ch);
     } else {
         $ctx = stream_context_create([
             'http' => [
-                'method'  => 'POST',
-                'header'  => "Content-Type: application/x-www-form-urlencoded\r\n",
-                'content' => $post_data,
-                'timeout' => 15,
+                'method'        => 'POST',
+                'header'        => "Content-Type: application/x-www-form-urlencoded\r\n",
+                'content'       => $postdata,
+                'timeout'       => 15,
+                'ignore_errors' => true,
             ],
         ]);
-        $response  = @file_get_contents($token_url, false, $ctx);
-        $http_code = 0;
+        $response = @file_get_contents($tokenurl, false, $ctx);
         if ($response !== false && isset($http_response_header)) {
-            preg_match('/HTTP\/\S+\s+(\d+)/', $http_response_header[0], $m);
-            $http_code = isset($m[1]) ? (int)$m[1] : 0;
+            preg_match('/HTTP\\/\\S+\\s+(\\d+)/', $http_response_header[0], $m);
+            $httpcode = isset($m[1]) ? (int)$m[1] : 0;
         }
     }
 
-    if ($http_code !== 200 || !$response) {
+    // Record why this failed. Previously any non-200 simply returned false, so the only trace
+    // was "code exchange failed" with no status, no endpoint and no response — nothing an
+    // administrator could act on. Secrets are never included: the client secret and the
+    // authorisation code stay out of $failure entirely.
+    $decoded = is_string($response) ? json_decode($response, true) : null;
+
+    if ($httpcode !== 200 || !$response) {
+        $failure = [
+            'endpoint'    => $tokenurl,
+            'http_status' => $httpcode,
+            'curl_error'  => $curlerror,
+            'response'    => is_array($decoded)
+                           ? json_encode(array_intersect_key($decoded,
+                               array_flip(['error', 'error_description', 'message'])))
+                           : (is_string($response) ? substr($response, 0, 300) : null),
+        ];
         return false;
     }
 
-    return json_decode($response, true);
+    if (!is_array($decoded) || empty($decoded['access_token'])) {
+        $failure = [
+            'endpoint'    => $tokenurl,
+            'http_status' => $httpcode,
+            'curl_error'  => null,
+            'response'    => 'HTTP 200 but no access_token in the response body',
+        ];
+        return false;
+    }
+
+    return $decoded;
 }

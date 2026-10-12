@@ -435,6 +435,9 @@ function api_ping($data, $rawbody, $jsonerror) {
         // no credit gate of its own, so this is reachable even when those pages are blocked.
         // Reports presence and source of credentials only — never any part of their value.
         'activation'      => local_campion_unlock_diagnostic(),
+        // The SSO endpoints as actually derived from the configured IAM URL, so a base URL
+        // pasted with a path on it is visible rather than only showing up as a failed login.
+        'sso_config'      => local_campion_sso_config_report(),
     ]);
 }
 

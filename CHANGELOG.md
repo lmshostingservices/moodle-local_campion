@@ -7,6 +7,50 @@ Moodle numeric version (`$plugin->version` in `version.php`), shown in parenthes
 
 ---
 
+## v1.0.18 — 2026-10-12 (2026101201)
+
+### Fixed
+
+- **The OAuth endpoints were wrong, so SSO could never complete.** The plugin assumed
+  `{iam_url}/oauth/token` and `{iam_url}/oauth/authorize`. Campion IAM publishes
+  `/resource/oauth2/token` and `/resource/oauth2/authorise` — note the British spelling of the
+  second — so neither guess was ever reachable. Every authorisation-code login failed at the
+  token exchange with "An error occurred during Campion SSO login", which, before v1.0.17,
+  logged nothing that identified the cause.
+  Endpoints are now read from the provider's OpenID Connect discovery document at
+  `{iam_url}/.well-known/openid-configuration`, which is what the discovery URL Campion
+  supplied was for. The result is cached for an hour, keyed to the configured IAM URL so that
+  changing it invalidates the cache. A failed discovery is not cached, and falls back to the
+  previous assumed paths with the failure reported rather than silently applied.
+
+---
+
+## v1.0.17 — 2026-10-12 (2026101200)
+
+### Fixed
+
+- **A failed SSO token exchange gave no diagnosable information.** `local_campion_exchange_code()`
+  returned `false` on any non-200 and discarded the status and response body; the activity log
+  recorded only "Code exchange failed — no access token returned". A wrong IAM URL, a
+  prod/test credential mismatch and an unreachable provider were indistinguishable, and the
+  user saw only "An error occurred during Campion SSO login."
+  The log now records the endpoint called, the HTTP status, any transport error, the
+  provider's own `error` / `error_description`, and the `redirect_uri` that was sent — that
+  last one being the usual cause of an `invalid_grant` or `redirect_uri_mismatch`. The client
+  secret and the authorisation code are never logged.
+
+### Added
+
+- **`Ping` reports the SSO configuration**, including the `/oauth/token` and `/oauth/authorize`
+  endpoints as actually derived from the configured IAM URL, and the `redirect_uri` the plugin
+  sends.
+- **A warning when the IAM URL contains a path.** The setting is a base URL and the plugin
+  appends the OAuth paths itself, so a value pasted with a path already on it — a
+  `/.well-known/...` discovery URL, for example — produces endpoints that do not exist. The
+  only previous symptom was a failed login with no explanation.
+
+---
+
 ## v1.0.16 — 2026-10-08 (2026100801)
 
 Responds to the LMS Labs activation handover. The Food Tech Gurus site's own problem was a

@@ -72,10 +72,26 @@ if (empty($jwt) && !empty($code)) {
     }
 
     $redirect_uri = $CFG->wwwroot . '/local/campion/sso.php';
-    $token_data   = local_campion_exchange_code($code, $redirect_uri);
+    $failure      = null;
+    $token_data   = local_campion_exchange_code($code, $redirect_uri, $failure);
 
     if (!$token_data || empty($token_data['access_token'])) {
-        local_campion_log('sso_error', 'Code exchange failed — no access token returned');
+        // Log what actually went wrong. The endpoint and status are the two things that
+        // identify a misconfigured IAM URL or a credential/environment mismatch, and without
+        // them the activity log says only that something failed.
+        $detail = 'Code exchange failed';
+        if (is_array($failure)) {
+            $detail .= ' — POST ' . $failure['endpoint']
+                     . ' returned HTTP ' . (int)$failure['http_status'];
+            if (!empty($failure['curl_error'])) {
+                $detail .= ' (' . $failure['curl_error'] . ')';
+            }
+            if (!empty($failure['response'])) {
+                $detail .= '; response: ' . $failure['response'];
+            }
+            $detail .= '; redirect_uri sent: ' . $redirect_uri;
+        }
+        local_campion_log('sso_error', $detail);
         throw new moodle_exception('sso_login_error', 'local_campion');
     }
 
