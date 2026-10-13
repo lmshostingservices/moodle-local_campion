@@ -7,6 +7,55 @@ Moodle numeric version (`$plugin->version` in `version.php`), shown in parenthes
 
 ---
 
+## v1.0.20 — 2026-10-13 (2026101301)
+
+Found by auditing the whole post-token path against Campion's published OIDC metadata, rather
+than fixing one layer per failed test. Every item below would have been a separate round trip.
+
+### Fixed
+
+- **The plugin read the wrong token.** It took `access_token` and fed it straight into JWT
+  validation. In OpenID Connect the claims live in `id_token`; the access token is commonly an
+  opaque string with no readable content, so this only worked with providers that happened to
+  return a JWT there. It now prefers `id_token` and falls back to `access_token`.
+- **Added a userinfo fallback.** When the token is not a verifiable JWT — the normal case for
+  an opaque access token — the user's claims are now fetched from the provider's
+  `userinfo_endpoint`, which Campion publishes and the plugin previously ignored. Without
+  this, an opaque token failed as "invalid or expired token" with nothing to explain it.
+- **JWT validation reported a bare `false` for eight distinct faults.** A wrong client secret,
+  an expired token, a replayed token, a malformed token and an unconfigured secret were
+  indistinguishable. Each now reports what actually failed and what to do about it.
+- **A non-HMAC signing algorithm failed silently.** The verifier assumed HS256 and never read
+  the token's `alg` header, so an RS256 token produced a signature mismatch with no hint that
+  the algorithm was the problem. The algorithm is now checked and named.
+- **The email claim was read only as `email`.** It is now also read as `mail`, `upn`,
+  `preferred_username` and several other common spellings, and validated as an address rather
+  than assumed to be one.
+
+### Changed
+
+- Endpoint discovery now also carries `userinfo_endpoint`.
+- The activity log records whether identity came from the token or from userinfo.
+
+---
+
+## v1.0.19 — 2026-10-13 (2026101300)
+
+### Fixed
+
+- **The token request used an encoding Campion rejects.** With the endpoints corrected in
+  v1.0.18, the exchange reached `/resource/oauth2/token` and was answered with HTTP 415
+  Unsupported Media Type. The plugin sent `application/x-www-form-urlencoded`, which is what
+  RFC 6749 specifies for this request; Campion IAM requires JSON.
+  The request now tries form encoding first and retries once as JSON **only** on a 415. Any
+  other status is a genuine answer from the provider and is reported rather than retried — an
+  authorisation code is single-use, so a blind retry would consume it and turn one failure
+  into two.
+- The activity log now records which encoding each attempt used, so a future media-type
+  problem is visible immediately.
+
+---
+
 ## v1.0.18 — 2026-10-12 (2026101201)
 
 ### Fixed

@@ -82,6 +82,7 @@ if (empty($jwt) && !empty($code)) {
         $detail = 'Code exchange failed';
         if (is_array($failure)) {
             $detail .= ' — POST ' . $failure['endpoint']
+                     . ' as ' . $failure['content_type']
                      . ' returned HTTP ' . (int)$failure['http_status'];
             if (!empty($failure['curl_error'])) {
                 $detail .= ' (' . $failure['curl_error'] . ')';
@@ -95,8 +96,15 @@ if (empty($jwt) && !empty($code)) {
         throw new moodle_exception('sso_login_error', 'local_campion');
     }
 
-    // The access token itself contains (or wraps) the JWT.
-    $jwt = $token_data['access_token'];
+    // Prefer the id_token. In OpenID Connect that is the JWT carrying the user's claims;
+    // the access token is frequently an opaque string with no readable content, so treating
+    // it as the JWT only works by luck. Fall back to the access token for providers that
+    // return a JWT there and no id_token at all.
+    $jwt = !empty($token_data['id_token'])
+         ? $token_data['id_token']
+         : $token_data['access_token'];
+
+    $accesstoken = $token_data['access_token'];
 }
 
 if (empty($jwt)) {
@@ -104,20 +112,43 @@ if (empty($jwt)) {
     redirect(new moodle_url('/login/index.php'));
 }
 
-// ── Validate JWT ─────────────────────────────────────────────────
-$payload = local_campion_validate_jwt($jwt);
+// ── Resolve the user's identity ──────────────────────────────────
+// Two routes, because providers differ. If the token is a JWT we read its claims directly.
+// If it is opaque — the normal OAuth 2.0 arrangement — we exchange it at the userinfo
+// endpoint. Previously only the first route existed, so an opaque token failed with
+// "invalid or expired token" and nothing to say why.
+$jwtreason = null;
+$payload = local_campion_validate_jwt($jwt, $jwtreason);
+$identitysource = 'token';
 
 if ($payload === false) {
-    local_campion_log('sso_error', 'JWT validation failed', null, null);
-    // Per Campion security requirements: if token is invalid, sign user out.
-    if (isloggedin()) {
-        require_logout();
+    $userinfofailure = null;
+    $claims = !empty($accesstoken)
+            ? local_campion_fetch_userinfo($accesstoken, $userinfofailure)
+            : false;
+
+    if (is_array($claims)) {
+        $payload = $claims;
+        $identitysource = 'userinfo';
+        local_campion_log('sso_userinfo',
+            'Token was not a verifiable JWT (' . $jwtreason . '); identity resolved from the '
+            . 'userinfo endpoint instead');
+    } else {
+        // Both routes failed. Record each reason — they are different faults with different
+        // fixes, and a single "invalid token" message distinguishes neither.
+        local_campion_log('sso_error',
+            'Could not establish identity. Token check: ' . ($jwtreason ?: 'unknown')
+            . '. Userinfo: ' . ($userinfofailure ?: 'not attempted'));
+
+        if (isloggedin()) {
+            require_logout();
+        }
+        throw new moodle_exception('sso_invalid_token', 'local_campion');
     }
-    throw new moodle_exception('sso_invalid_token', 'local_campion');
 }
 
-// ── Extract user info from JWT ────────────────────────────────────
-$email       = isset($payload['email'])      ? strtolower(trim($payload['email'])) : '';
+// ── Extract user info ─────────────────────────────────────────────
+$email       = local_campion_email_from_claims($payload);
 $resource_id = isset($payload['resource_id']) ? $payload['resource_id'] : '';
 $page_id     = isset($payload['page_id'])     ? $payload['page_id']     : '';
 
@@ -138,7 +169,24 @@ foreach (['surname', 'lastName', 'lastname', 'family_name', 'familyName'] as $k)
 }
 
 if (empty($email)) {
-    local_campion_log('sso_error', 'JWT contained no email claim');
+    // If the token had no usable email, the userinfo endpoint may still carry one.
+    if ($identitysource === 'token' && !empty($accesstoken)) {
+        $userinfofailure = null;
+        $claims = local_campion_fetch_userinfo($accesstoken, $userinfofailure);
+        if (is_array($claims)) {
+            $email = local_campion_email_from_claims($claims);
+            if ($email !== '') {
+                $identitysource = 'userinfo';
+                $payload = array_merge($payload, $claims);
+            }
+        }
+    }
+}
+
+if (empty($email)) {
+    local_campion_log('sso_error',
+        'No email address found in the ' . $identitysource . ' claims. Claims present: '
+        . implode(', ', array_keys($payload)));
     throw new moodle_exception('sso_no_email', 'local_campion');
 }
 

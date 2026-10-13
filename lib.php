@@ -206,70 +206,184 @@ function local_campion_get_acara_id() {
  * @param  string      $token  Raw JWT string
  * @return array|false         Decoded payload array, or false on failure
  */
-function local_campion_validate_jwt($token) {
+function local_campion_validate_jwt($token, &$reason = null) {
     global $DB;
 
+    $reason = null;
+
     if (empty($token)) {
+        $reason = 'No token supplied';
         return false;
     }
 
     $parts = explode('.', $token);
     if (count($parts) !== 3) {
+        // An opaque access token looks exactly like this. It is not an error in itself —
+        // the caller may still resolve the user through the userinfo endpoint.
+        $reason = 'Not a JWT (expected 3 dot-separated parts, got ' . count($parts) . ')';
         return false;
     }
 
-    [$header_b64, $payload_b64, $sig_b64] = $parts;
+    [$headerb64, $payloadb64, $sigb64] = $parts;
 
-    // Verify HMAC-SHA256 signature with client_secret.
+    // Check the algorithm before assuming HMAC. Computing an HMAC against an RS256 token
+    // always fails the comparison, which previously surfaced as a bare "invalid token" with
+    // nothing to indicate that the signing scheme was the problem.
+    $header = json_decode(local_campion_base64url_decode($headerb64), true);
+    $alg = is_array($header) && !empty($header['alg']) ? strtoupper($header['alg']) : '';
+
+    if ($alg !== '' && $alg !== 'HS256') {
+        $reason = 'Token is signed with ' . $alg . ', but this plugin verifies HS256 (HMAC '
+                . 'with the OAuth client secret). An asymmetric algorithm needs the '
+                . "provider's public keys, which its discovery document does not publish.";
+        return false;
+    }
+
     $secret = local_campion_get_client_secret();
     if (empty($secret)) {
-        // No secret configured — cannot validate.
-        return false;
-    }
-    $expected_sig = hash_hmac('sha256', $header_b64 . '.' . $payload_b64, $secret, true);
-    $provided_sig = local_campion_base64url_decode($sig_b64);
-
-    if (!hash_equals($expected_sig, $provided_sig)) {
+        $reason = 'No OAuth client secret configured, so the signature cannot be verified';
         return false;
     }
 
-    // Decode payload.
-    $payload_json = local_campion_base64url_decode($payload_b64);
-    $payload      = json_decode($payload_json, true);
+    $expectedsig = hash_hmac('sha256', $headerb64 . '.' . $payloadb64, $secret, true);
+    $providedsig = local_campion_base64url_decode($sigb64);
+
+    if (!hash_equals($expectedsig, $providedsig)) {
+        $reason = 'Signature does not match. The OAuth client secret configured here is '
+                . 'probably not the one this token was signed with — check it is the '
+                . 'production secret, not a test one.';
+        return false;
+    }
+
+    $payloadjson = local_campion_base64url_decode($payloadb64);
+    $payload     = json_decode($payloadjson, true);
     if (!is_array($payload)) {
+        $reason = 'Token payload is not valid JSON';
         return false;
     }
 
-    // Check expiry: deny if older than 5 minutes (with 1-minute skew = 6 minutes total).
     $now  = time();
     $iat  = isset($payload['iat']) ? (int)$payload['iat'] : 0;
     $exp  = isset($payload['exp']) ? (int)$payload['exp'] : ($iat + 300);
     $skew = 60;
 
     if ($now > ($exp + $skew)) {
-        return false; // Token expired.
+        $reason = 'Token expired at ' . userdate($exp) . ' (now ' . userdate($now) . ')';
+        return false;
     }
     if ($iat > ($now + $skew)) {
-        return false; // Token issued in the future (clock skew beyond tolerance).
+        $reason = 'Token issued in the future — check the clock on this server or the '
+                . "provider's";
+        return false;
     }
 
-    // Replay prevention: check JTI.
     $jti = isset($payload['jti']) ? $payload['jti'] : hash('sha256', $token);
 
-    // Clean up old nonces first (> 6 minutes old).
-    $DB->delete_records_select('local_campion_jwt_nonces', 'timecreated < :cutoff', ['cutoff' => $now - 360]);
+    $DB->delete_records_select('local_campion_jwt_nonces', 'timecreated < :cutoff',
+        ['cutoff' => $now - 360]);
 
     if ($DB->record_exists('local_campion_jwt_nonces', ['jti' => $jti])) {
-        return false; // Replayed token.
+        $reason = 'Token has already been used. Authorisation codes and tokens are '
+                . 'single-use — start a fresh login rather than replaying a URL.';
+        return false;
     }
 
-    // Store this nonce.
     $DB->insert_record('local_campion_jwt_nonces', (object)[
         'jti'         => $jti,
         'timecreated' => $now,
     ]);
 
     return $payload;
+}
+
+/**
+ * Pull an email address out of a set of OIDC claims.
+ *
+ * Providers differ on which claim carries it, so accept the common spellings rather than
+ * failing on a token that does contain the address under another name.
+ *
+ * @param  array $claims
+ * @return string Empty string if none found
+ */
+function local_campion_email_from_claims(array $claims) {
+    foreach (['email', 'mail', 'emailAddress', 'email_address', 'upn',
+              'preferred_username', 'username', 'sub'] as $key) {
+        if (!empty($claims[$key]) && is_string($claims[$key])
+                && filter_var(trim($claims[$key]), FILTER_VALIDATE_EMAIL)) {
+            return strtolower(trim($claims[$key]));
+        }
+    }
+    return '';
+}
+
+/**
+ * Fetch user claims from the provider's userinfo endpoint using an access token.
+ *
+ * Needed when the access token is opaque rather than a JWT, which is the normal OAuth 2.0
+ * arrangement and what this provider's discovery document implies by publishing a userinfo
+ * endpoint. Without this the plugin can only work with providers that happen to return a
+ * readable JWT.
+ *
+ * @param  string      $accesstoken
+ * @param  string|null $failure  Set to a human-readable reason on failure
+ * @return array|false           Claims array, or false
+ */
+function local_campion_fetch_userinfo($accesstoken, &$failure = null) {
+    $failure = null;
+
+    $endpoints = local_campion_discover_endpoints();
+    $url = !empty($endpoints['userinfo_endpoint'])
+         ? $endpoints['userinfo_endpoint']
+         : null;
+
+    if (empty($url)) {
+        $failure = 'The provider publishes no userinfo endpoint';
+        return false;
+    }
+
+    $response = false;
+    $httpcode = 0;
+    $error = null;
+
+    if (function_exists('curl_init')) {
+        $ch = curl_init($url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, [
+            'Authorization: Bearer ' . $accesstoken,
+            'Accept: application/json',
+        ]);
+        $response = curl_exec($ch);
+        $httpcode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        if ($response === false) {
+            $error = curl_error($ch);
+        }
+        curl_close($ch);
+    } else {
+        $ctx = stream_context_create(['http' => [
+            'method'        => 'GET',
+            'header'        => "Authorization: Bearer " . $accesstoken . "\r\nAccept: application/json\r\n",
+            'timeout'       => 15,
+            'ignore_errors' => true,
+        ]]);
+        $response = @file_get_contents($url, false, $ctx);
+        if ($response !== false && isset($http_response_header)) {
+            preg_match('/HTTP\\/\\S+\\s+(\\d+)/', $http_response_header[0], $m);
+            $httpcode = isset($m[1]) ? (int)$m[1] : 0;
+        }
+    }
+
+    $decoded = is_string($response) ? json_decode($response, true) : null;
+
+    if ($httpcode !== 200 || !is_array($decoded)) {
+        $failure = 'GET ' . $url . ' returned HTTP ' . $httpcode
+                 . ($error ? ' (' . $error . ')' : '')
+                 . (is_string($response) ? '; response: ' . substr($response, 0, 200) : '');
+        return false;
+    }
+
+    return $decoded;
 }
 
 /**
@@ -466,6 +580,7 @@ function local_campion_discover_endpoints($forcerefresh = false) {
     $fallback = [
         'token_endpoint'         => $iamurl . '/oauth/token',
         'authorization_endpoint' => $iamurl . '/oauth/authorize',
+        'userinfo_endpoint'      => null,
         'source'                 => 'fallback',
         'error'                  => null,
     ];
@@ -531,6 +646,9 @@ function local_campion_discover_endpoints($forcerefresh = false) {
         'authorization_endpoint' => !empty($doc['authorization_endpoint'])
                                   ? $doc['authorization_endpoint']
                                   : $fallback['authorization_endpoint'],
+        'userinfo_endpoint'      => !empty($doc['userinfo_endpoint'])
+                                  ? $doc['userinfo_endpoint']
+                                  : null,
         'source'                 => 'discovery',
         'error'                  => null,
     ];
@@ -730,86 +848,117 @@ function local_campion_build_auth_url($email, $state, $redirecturi) {
  * @return array|false              Token response array, or false on failure
  */
 function local_campion_exchange_code($code, $redirecturi, &$failure = null) {
-    $iamurl       = local_campion_get_iam_url();
     $clientid     = local_campion_get_client_id();
     $clientsecret = local_campion_get_client_secret();
+    $endpoints    = local_campion_discover_endpoints();
+    $tokenurl     = $endpoints['token_endpoint'];
 
     $failure = null;
 
-    $postdata = http_build_query([
+    $params = [
         'grant_type'    => 'authorization_code',
         'code'          => $code,
         'redirect_uri'  => $redirecturi,
         'client_id'     => $clientid,
         'client_secret' => $clientsecret,
-    ]);
+    ];
 
-    $endpoints = local_campion_discover_endpoints();
-    $tokenurl  = $endpoints['token_endpoint'];
+    // RFC 6749 specifies form encoding, so try that first. Campion IAM answers 415
+    // Unsupported Media Type to it and wants JSON, and other providers accept only one or the
+    // other, so fall back rather than hard-coding either. Only a 415 triggers the retry: any
+    // other status is a real answer and is reported as-is.
+    $attempts = [
+        ['content_type' => 'application/x-www-form-urlencoded', 'body' => http_build_query($params)],
+        ['content_type' => 'application/json',                  'body' => json_encode($params)],
+    ];
 
+    $lastfailure = null;
+
+    foreach ($attempts as $attempt) {
+        $result = local_campion_post_token_request($tokenurl, $attempt['body'], $attempt['content_type']);
+
+        if ($result['http_code'] === 200 && !empty($result['decoded']['access_token'])) {
+            return $result['decoded'];
+        }
+
+        $decoded = $result['decoded'];
+        $lastfailure = [
+            'endpoint'     => $tokenurl,
+            'content_type' => $attempt['content_type'],
+            'http_status'  => $result['http_code'],
+            'curl_error'   => $result['error'],
+            'response'     => is_array($decoded)
+                            ? json_encode(array_intersect_key($decoded,
+                                array_flip(['error', 'error_description', 'message'])))
+                            : (is_string($result['raw']) ? substr($result['raw'], 0, 300) : null),
+        ];
+
+        // Only an unsupported media type is worth retrying in another encoding.
+        if ($result['http_code'] !== 415) {
+            break;
+        }
+    }
+
+    $failure = $lastfailure;
+    return false;
+}
+
+/**
+ * POST one token request and return the raw outcome.
+ *
+ * Split out so the encoding fallback above can issue the same request two ways without
+ * duplicating the transport handling.
+ *
+ * @param  string $url
+ * @param  string $body
+ * @param  string $contenttype
+ * @return array  ['http_code' => int, 'raw' => mixed, 'decoded' => ?array, 'error' => ?string]
+ */
+function local_campion_post_token_request($url, $body, $contenttype) {
     $response = false;
     $httpcode = 0;
-    $curlerror = null;
+    $error = null;
 
     if (function_exists('curl_init')) {
-        $ch = curl_init($tokenurl);
+        $ch = curl_init($url);
         curl_setopt($ch, CURLOPT_POST, true);
-        curl_setopt($ch, CURLOPT_POSTFIELDS, $postdata);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_TIMEOUT, 15);
         curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-        curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/x-www-form-urlencoded']);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, [
+            'Content-Type: ' . $contenttype,
+            'Accept: application/json',
+        ]);
         $response = curl_exec($ch);
         $httpcode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
         if ($response === false) {
-            $curlerror = curl_error($ch);
+            $error = curl_error($ch);
         }
         curl_close($ch);
     } else {
         $ctx = stream_context_create([
             'http' => [
                 'method'        => 'POST',
-                'header'        => "Content-Type: application/x-www-form-urlencoded\r\n",
-                'content'       => $postdata,
+                'header'        => "Content-Type: " . $contenttype . "\r\nAccept: application/json\r\n",
+                'content'       => $body,
                 'timeout'       => 15,
                 'ignore_errors' => true,
             ],
         ]);
-        $response = @file_get_contents($tokenurl, false, $ctx);
+        $response = @file_get_contents($url, false, $ctx);
         if ($response !== false && isset($http_response_header)) {
             preg_match('/HTTP\\/\\S+\\s+(\\d+)/', $http_response_header[0], $m);
             $httpcode = isset($m[1]) ? (int)$m[1] : 0;
         }
     }
 
-    // Record why this failed. Previously any non-200 simply returned false, so the only trace
-    // was "code exchange failed" with no status, no endpoint and no response — nothing an
-    // administrator could act on. Secrets are never included: the client secret and the
-    // authorisation code stay out of $failure entirely.
     $decoded = is_string($response) ? json_decode($response, true) : null;
 
-    if ($httpcode !== 200 || !$response) {
-        $failure = [
-            'endpoint'    => $tokenurl,
-            'http_status' => $httpcode,
-            'curl_error'  => $curlerror,
-            'response'    => is_array($decoded)
-                           ? json_encode(array_intersect_key($decoded,
-                               array_flip(['error', 'error_description', 'message'])))
-                           : (is_string($response) ? substr($response, 0, 300) : null),
-        ];
-        return false;
-    }
-
-    if (!is_array($decoded) || empty($decoded['access_token'])) {
-        $failure = [
-            'endpoint'    => $tokenurl,
-            'http_status' => $httpcode,
-            'curl_error'  => null,
-            'response'    => 'HTTP 200 but no access_token in the response body',
-        ];
-        return false;
-    }
-
-    return $decoded;
+    return [
+        'http_code' => $httpcode,
+        'raw'       => $response,
+        'decoded'   => is_array($decoded) ? $decoded : null,
+        'error'     => $error,
+    ];
 }

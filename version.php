@@ -25,8 +25,8 @@
 defined('MOODLE_INTERNAL') || die();
 
 $plugin->component = 'local_campion';
-$plugin->version   = 2026101201;
-$plugin->release   = '1.0.18'; // FIX-OAUTH-ENDPOINTS (v1.0.18): The OAuth endpoints were guessed as /oauth/token and /oauth/authorize. Campion IAM serves /resource/oauth2/token and /resource/oauth2/authorise, so SSO could never have completed on any release. Endpoints are now read from the provider's OIDC discovery document and cached for an hour, falling back to the old guesses only if discovery fails.
+$plugin->version   = 2026101301;
+$plugin->release   = '1.0.20'; // FIX-IDENTITY-RESOLUTION (v1.0.20): Audited the rest of the SSO flow rather than waiting for each layer to fail. The plugin treated access_token as a JWT; in OpenID Connect the claims are in id_token and the access token is usually opaque, so it now prefers id_token and falls back to the userinfo endpoint when the token is not a readable JWT. JWT validation reports which of its eight checks failed instead of a bare false, notices a non-HMAC signing algorithm instead of silently mismatching, and the email claim is read under several common names.
 $plugin->requires  = 2022041900; // Moodle 4.0+
 $plugin->supported = [400, 500]; // Moodle 4.0 to 5.x
 $plugin->maturity  = MATURITY_STABLE;

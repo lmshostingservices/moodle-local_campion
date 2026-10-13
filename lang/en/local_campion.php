@@ -90,6 +90,7 @@ $string['sso_no_email']             = 'No email address was provided in the Camp
 $string['sso_user_not_found']       = 'Your account was not found in this Moodle installation. Please contact your administrator.';
 $string['sso_login_error']          = 'An error occurred during Campion SSO login. Please try again.';
 $string['sso_state_mismatch']       = 'The login request could not be verified. Please return to Moodle and launch the resource again.';
+$string['sso_userinfo']             = "Identity resolved from the provider's userinfo endpoint.";
 
 // Resources page.
 $string['resources']                = 'My Campion Resources';
