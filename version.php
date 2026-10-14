@@ -25,8 +25,8 @@
 defined('MOODLE_INTERNAL') || die();
 
 $plugin->component = 'local_campion';
-$plugin->version   = 2026101301;
-$plugin->release   = '1.0.20'; // FIX-IDENTITY-RESOLUTION (v1.0.20): Audited the rest of the SSO flow rather than waiting for each layer to fail. The plugin treated access_token as a JWT; in OpenID Connect the claims are in id_token and the access token is usually opaque, so it now prefers id_token and falls back to the userinfo endpoint when the token is not a readable JWT. JWT validation reports which of its eight checks failed instead of a bare false, notices a non-HMAC signing algorithm instead of silently mismatching, and the email claim is read under several common names.
+$plugin->version   = 2026101401;
+$plugin->release   = '1.0.21'; // FEATURE-LOGIN-PAGE-SSO (v1.0.21): Adds a "Log in with Campion" option to the Moodle login page, for a user who goes to Moodle directly rather than arriving from the Campion platform. New login.php starts the authorisation-code flow for a visitor with no Moodle session, preserving the page they were trying to reach; the existing sso.php handles the return leg unchanged. The option is contributed through the standard output hook, since core builds its login-page provider list from auth plugins only, and is governed by a new "Show Log in with Campion on the login page" setting. PREVIOUS (v1.0.20): Audited the rest of the SSO flow rather than waiting for each layer to fail. The plugin treated access_token as a JWT; in OpenID Connect the claims are in id_token and the access token is usually opaque, so it now prefers id_token and falls back to the userinfo endpoint when the token is not a readable JWT. JWT validation reports which of its eight checks failed instead of a bare false, notices a non-HMAC signing algorithm instead of silently mismatching, and the email claim is read under several common names.
 $plugin->requires  = 2022041900; // Moodle 4.0+
 $plugin->supported = [400, 500]; // Moodle 4.0 to 5.x
 $plugin->maturity  = MATURITY_STABLE;

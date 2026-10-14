@@ -30,14 +30,23 @@ if (!local_campion_is_enabled()) {
     throw new moodle_exception('notunlocked', 'local_campion');
 }
 
-if (!local_campion_check_unlock()) {
-    throw new moodle_exception('notunlocked', 'local_campion');
-}
-
 // CSRF state token — stored in the Moodle session for verification in the sso.php callback.
+//
+// This must be written BEFORE the licence check below, not after.
+// local_campion_check_unlock() calls \core\session\manager::write_close() before
+// its outbound request, and a write to $SESSION after that point is discarded —
+// Moodle logs "mutated the session after it was closed" and the value is absent
+// on the next request. sso.php reads an absent state as an IAM-initiated flow and
+// skips verification, so for as long as the write happened after the gate the
+// CSRF check was never actually performed on this flow.
 global $SESSION;
 $state = bin2hex(random_bytes(16));
 $SESSION->campion_oauth_state = $state;
+
+// Licence gate — from here on the session is closed for writing.
+if (!local_campion_check_unlock()) {
+    throw new moodle_exception('notunlocked', 'local_campion');
+}
 
 $redirect_uri = $CFG->wwwroot . '/local/campion/sso.php';
 $auth_url     = local_campion_build_auth_url($USER->email, $state, $redirect_uri);

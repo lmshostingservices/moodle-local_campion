@@ -832,12 +832,49 @@ function local_campion_build_auth_url($email, $state, $redirecturi) {
         'client_id'     => $client_id,
         'redirect_uri'  => $redirecturi,
         'state'         => $state,
-        'login_hint'    => $email,
     ];
+
+    // Only hint at an identity when we actually have one. A login-page flow starts
+    // from an anonymous visitor, and sending an empty login_hint asks Campion to
+    // pre-fill the sign-in form with nothing, which some providers treat as an
+    // unknown user rather than as no hint at all.
+    if ($email !== '' && $email !== null) {
+        $params['login_hint'] = $email;
+    }
 
     $endpoints = local_campion_discover_endpoints();
 
     return $endpoints['authorization_endpoint'] . '?' . http_build_query($params);
+}
+
+/**
+ * Is SSO configured well enough to be attempted?
+ *
+ * Checks only local configuration — no network call, so this is safe to call on
+ * every page render. It deliberately does not verify the licence or reach Campion.
+ *
+ * @return bool
+ */
+function local_campion_sso_is_configured() {
+    return (local_campion_get_client_id() !== false && local_campion_get_client_id() !== ''
+        && local_campion_get_client_secret() !== false && local_campion_get_client_secret() !== ''
+        && local_campion_get_iam_url() !== '');
+}
+
+/**
+ * Should the "Log in with Campion" option appear on the Moodle login page?
+ *
+ * An unsaved checkbox reads as false from get_config(), not as its declared
+ * default, so an unset value is treated as enabled — the same convention used by
+ * local_campion_isbn_validation_enabled(). This only matters on a site that has
+ * never opened the settings page; the option still shows nothing unless SSO is
+ * configured, so an unconfigured site is unaffected either way.
+ *
+ * @return bool
+ */
+function local_campion_login_button_enabled() {
+    $val = get_config('local_campion', 'show_login_button');
+    return ($val === false) ? true : (bool)$val;
 }
 
 /**

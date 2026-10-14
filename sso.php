@@ -266,6 +266,14 @@ $DB->update_record('local_campion_users', (object)[
     'timemodified' => time(),
 ]);
 
+// Capture and consume the login-page return target before the session is
+// regenerated below.
+$loginwantsurl = '';
+if (!empty($SESSION->campion_loginwantsurl)) {
+    $loginwantsurl = $SESSION->campion_loginwantsurl;
+}
+unset($SESSION->campion_loginwantsurl);
+
 // ── Complete Moodle login ─────────────────────────────────────────
 // Do NOT call \core\session\manager::write_close() here. It closes the session for writing,
 // and complete_user_login() then regenerates the session and writes $USER into it — into a
@@ -276,7 +284,16 @@ complete_user_login($moodle_user);
 local_campion_log('sso_login', 'Campion SSO login successful', $email, $moodle_user->id);
 
 // ── Redirect to resource (or Moodle home) ─────────────────────────
+// A login-page flow (login.php) records where the visitor was originally headed.
+// Honour it unless the token named a specific resource, which is more specific.
+// Read before complete_user_login(), which regenerates the session id, and
+// consume it either way so it cannot leak into a later login.
 $target = local_campion_resolve_resource_url($resource_id, $page_id);
+
+if (empty($resource_id) && !empty($loginwantsurl)) {
+    $target = new moodle_url($loginwantsurl);
+}
+
 redirect($target);
 
 // ─────────────────────────────────────────────────────────────────

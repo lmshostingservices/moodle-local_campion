@@ -7,6 +7,64 @@ Moodle numeric version (`$plugin->version` in `version.php`), shown in parenthes
 
 ---
 
+## v1.0.21 — 2026-10-14 (2026101401)
+
+Adds the login-page SSO option Campion asked for, and fixes a CSRF defect found while testing
+it that also affected the existing publisher-initiated flow.
+
+### Added
+
+- **"Log in with Campion" on the Moodle login page.** A visitor who goes straight to Moodle
+  rather than arriving from the Campion platform can now authenticate with their Campion
+  credentials. New `login.php` starts the authorisation-code flow for a visitor with no Moodle
+  session — deliberately without `require_login()`, which is what distinguishes it from
+  `launch.php` — and the existing `sso.php` handles the return leg unchanged.
+- No `login_hint` is sent on this flow, since the visitor is anonymous at that point. Sending
+  an empty one asks the provider to pre-fill its form with nothing, which some providers treat
+  as an unknown user rather than as no hint at all. `launch.php` still sends it, because there
+  it is known.
+- The page the visitor was trying to reach is preserved across the round trip and they are
+  returned to it after login, instead of landing on the dashboard.
+- Setting **Show "Log in with Campion" on the login page** (`show_login_button`), default on.
+  The option is contributed through `\core\hook\output\before_standard_top_of_body_html_generation`
+  rather than by a second component: core builds its login-page provider list by asking `auth`
+  plugins for `loginpage_idp_list()`, and never asks a `local` plugin. It uses core's own
+  `login-identityprovider-btn` classes, so it inherits the site theme's treatment of native
+  providers, and renders only on the login form itself — not on the signup or
+  forgotten-password pages, which share that page layout.
+
+### Fixed
+
+- **The CSRF `state` token was never actually verified on publisher-initiated SSO.**
+  `launch.php` wrote `$SESSION->campion_oauth_state` *after* calling
+  `local_campion_check_unlock()`, which calls `\core\session\manager::write_close()` before
+  its outbound request. A write to the session after it is closed is discarded — Moodle itself
+  logs "mutated the session after it was closed" — so the state never survived to the callback.
+  `sso.php` reads an absent state as a Campion-initiated flow and skips verification, so the
+  check silently passed without ever being made. Demonstrated directly: with the old ordering a
+  forged `state` completed a login; with the write moved ahead of the licence check it is
+  refused with `sso_state_mismatch`. This is the same class of defect as the `write_close()`
+  bug fixed in v1.0.17 — the session was being closed before the work that depended on it.
+- Audited every `$SESSION` write in the plugin against the first call that can close the
+  session; `launch.php` and `login.php` were the only two affected, and both now write first.
+
+### Verified
+
+Against Moodle 4.5.15 on PostgreSQL 16 over real HTTP, with a mock provider reproducing
+Campion's observed behaviour (path-prefixed `/resource/oauth2/*` endpoints, HTTP 415 on a
+form-encoded token POST, and an opaque access token):
+
+- anonymous visitor → login page button → Campion → signed in, landing on their resources;
+- the same flow with an opaque access token, resolving identity via the userinfo endpoint;
+- a forged `state` refused on both `login.php` and `launch.php`, and the correct one accepted;
+- the intended return page honoured instead of the dashboard;
+- an already-signed-in visitor hitting `login.php` sent straight on, not round the flow again;
+- the option shown or hidden correctly across all five configurations (on, off, unset,
+  SSO not configured, integration disabled), and absent from signup and forgotten-password;
+- `launch.php` still sends `login_hint`; provisioning API unchanged and re-tested.
+
+---
+
 ## v1.0.20 — 2026-10-13 (2026101301)
 
 Found by auditing the whole post-token path against Campion's published OIDC metadata, rather

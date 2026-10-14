@@ -30,6 +30,7 @@ Install to `local/campion` and run the Moodle upgrade. Then configure the plugin
 | OAuth client secret | `client_secret` | Client secret issued by Campion. Also used to verify SSO token signatures. |
 | Allowed ACARA IDs | `allowed_acara_ids` | ACARA IDs this site may provision for, one per line or comma separated. Blank accepts any. |
 | Validate ISBNs | `validate_isbn` | Reject subscriptions failing ISBN check-digit validation when no product catalogue is loaded. Default on. |
+| Show "Log in with Campion" on the login page | `show_login_button` | Add a Campion sign-in option to the Moodle login page. Default on; appears only once the OAuth client ID, secret and IAM URL are all set. |
 | Create Moodle accounts on first SSO login | `sso_autocreate` | Create a Moodle account for a verified SSO user who does not have one. Default **off**. |
 | Default ACARA ID | `acara_id` | Fallback ACARA ID for single-campus sites, used when a call supplies none. |
 
@@ -151,17 +152,34 @@ arrived. Fix that before debugging anything else.
 
 ## Single sign-on
 
-Two entry points:
+Three entry points, all returning to the same callback:
 
-- **Publisher-initiated** — `local/campion/launch.php` redirects a logged-in Moodle user to
-  Campion IAM, carrying a single-use CSRF `state` token stored in the Moodle session.
-- **IAM-initiated** — Campion posts to `local/campion/sso.php` with a signed token, or with an
+- **From the Moodle login page** — `local/campion/login.php`. A visitor who goes straight to
+  Moodle and is not signed in sees a **Log in with Campion** option on the login form, and is
+  sent to Campion IAM to authenticate. No `login_hint` is sent, because the visitor is
+  anonymous at that point, so Campion prompts for credentials. Where the visitor was
+  originally headed is remembered and they are returned there after login rather than to the
+  dashboard.
+- **From inside Moodle** — `local/campion/launch.php` redirects an already-signed-in Moodle
+  user out to Campion, passing their email as a `login_hint`. This is the resource-launch
+  path, not a login path: it requires an existing Moodle session.
+- **From Campion** — Campion posts to `local/campion/sso.php` with a signed token, or with an
   OAuth 2.0 authorisation code that is exchanged for one.
 
+Moodle builds the "Log in using your account on:" list on its login page from `auth` plugins
+only, so a `local` plugin is never asked for one. The option is therefore contributed through
+the standard output hook, using core's own login-button classes so it inherits whatever the
+site theme does with native providers. It can be turned off in the plugin settings.
+
 Tokens are verified for signature (HMAC-SHA256 against the OAuth client secret), expiry and
-replay before any session is established. On a publisher-initiated flow the `state` token is
-also verified and consumed; IAM-initiated flows legitimately carry no prior session state and
+replay before any session is established. On a flow this site started, the `state` token is
+also verified and consumed; flows Campion starts legitimately carry no prior session state and
 rely on the signature alone.
+
+Because an absent `state` is read as a Campion-initiated flow, the `state` must actually reach
+the session for that check to mean anything. Both outbound entry points therefore write it
+**before** the licence check, which closes the session for writing — a write after that point
+is silently discarded and the verification would pass without ever being performed.
 
 ### Accounts
 

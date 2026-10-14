@@ -106,6 +106,14 @@ if ($hassiteconfig) {
         0
     ));
 
+    // ── "Log in with Campion" option on the Moodle login page ────────
+    $settings->add(new admin_setting_configcheckbox(
+        'local_campion/show_login_button',
+        get_string('show_login_button', 'local_campion'),
+        get_string('show_login_button_desc', 'local_campion'),
+        1
+    ));
+
     // ── School ACARA ID (default for this site) ──────────────────────
     // Used only when a provisioning call supplies no acaraId of its own. Multi-campus
     // installations should send acaraId per user rather than relying on this.
