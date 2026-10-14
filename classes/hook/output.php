@@ -72,7 +72,10 @@ class output {
 
         $url = new \moodle_url('/local/campion/login.php');
 
-        $html = \html_writer::div(
+        // The markup core would produce for a native identity provider: a divider,
+        // the standard heading, and a full-width button carrying core's own classes,
+        // so the site theme styles it exactly as it styles the real ones.
+        $block = \html_writer::div('', 'login-divider') .
             \html_writer::tag(
                 'h2',
                 get_string('potentialidps', 'auth'),
@@ -81,11 +84,54 @@ class output {
             \html_writer::link(
                 $url,
                 get_string('sso_login_button', 'local_campion'),
-                ['class' => 'btn login-identityprovider-btn btn-block btn-secondary']
-            ),
-            'login-identityproviders local-campion-loginoption mx-auto my-3',
-            ['style' => 'max-width: 26rem;']
+                ['class' => 'btn login-identityprovider-btn btn-block']
+            );
+
+        $html = \html_writer::div(
+            $block,
+            'login-identityproviders local-campion-loginoption local-campion-unplaced',
+            ['id' => 'local-campion-loginoption']
         );
+
+        // This hook is the only server-side insertion point Moodle offers on the
+        // login page — core's login template renders standard_top_of_body_html and
+        // the main content, and nothing in between — so the markup necessarily
+        // starts at the top of <body>, above the header. The script below moves it
+        // into the login box, directly beneath the sign-in form, which is where core
+        // puts native identity providers.
+        //
+        // It is hidden until it has been moved so it does not appear at the top of
+        // the page first. The class is removed whether or not the move succeeded, so
+        // a theme with different markup still shows a working button rather than
+        // hiding it; a browser with JavaScript disabled gets the same fallback via
+        // the <noscript> rule. Core itself emits inline script on this page, so this
+        // introduces no constraint the login page did not already have.
+        $html .= <<<HTML
+<style>.local-campion-unplaced{display:none}</style>
+<noscript><style>.local-campion-unplaced{display:block}</style></noscript>
+<script>
+(function () {
+    var place = function () {
+        var opt = document.getElementById('local-campion-loginoption');
+        if (!opt) {
+            return;
+        }
+        var form = document.querySelector('.loginform form.login-form')
+            || document.querySelector('.login-container form')
+            || document.querySelector('#region-main form');
+        if (form && form.parentNode) {
+            form.parentNode.insertBefore(opt, form.nextSibling);
+        }
+        opt.className = opt.className.replace(/\s*local-campion-unplaced\s*/, ' ');
+    };
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', place);
+    } else {
+        place();
+    }
+}());
+</script>
+HTML;
 
         $hook->add_html($html);
     }

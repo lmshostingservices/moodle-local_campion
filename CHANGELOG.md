@@ -7,6 +7,36 @@ Moodle numeric version (`$plugin->version` in `version.php`), shown in parenthes
 
 ---
 
+## v1.0.22 — 2026-10-14 (2026101402)
+
+Placement fix for the login-page option shipped in v1.0.21.
+
+### Fixed
+
+- **The "Log in with Campion" option rendered above the site header**, floating at the top of
+  the page instead of sitting with the login form. Moodle's login template renders
+  `standard_top_of_body_html` and then the main content with nothing in between, so the only
+  server-side insertion point available on that page necessarily emits at the top of `<body>`.
+  The option is now moved into the login box immediately beneath the sign-in form — the
+  position core uses for native identity providers, between the form and "Is this your first
+  time here?" — and carries a matching divider and the standard
+  "Log in using your account on:" heading.
+- It is hidden until it has been placed, so it no longer appears at the top of the page first.
+  The reveal happens whether or not the move succeeded, so a theme whose login markup differs
+  still shows a working button rather than hiding it, and a `<noscript>` rule gives the same
+  fallback when JavaScript is unavailable. Core already emits inline script on the login page,
+  so this adds no constraint the page did not already have.
+
+### Verified
+
+Rendered in headless Chromium against Moodle 4.5.15: the option resolves inside
+`.login-container`, with `form.login-form` as its previous sibling and the
+"first time here" divider as its next, and clicking it completes a Campion sign-in and lands
+an authenticated session. Re-checked with JavaScript disabled (option still shown), on the
+signup and forgotten-password pages (absent), and across all five configuration states.
+
+---
+
 ## v1.0.21 — 2026-10-14 (2026101401)
 
 Adds the login-page SSO option Campion asked for, and fixes a CSRF defect found while testing
