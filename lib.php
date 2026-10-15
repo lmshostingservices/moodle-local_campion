@@ -16,6 +16,14 @@
 
 defined('MOODLE_INTERNAL') || die();
 
+/**
+ * Default OAuth scope requested at the authorisation endpoint.
+ *
+ * The standard OpenID Connect set: openid asks for an id_token, profile and email
+ * for the name and address claims this plugin resolves an account from.
+ */
+define('LOCAL_CAMPION_DEFAULT_SCOPE', 'openid profile email');
+
 // ─────────────────────────────────────────────────────────────────
 // Credit unlock / feature gate
 // ─────────────────────────────────────────────────────────────────
@@ -823,8 +831,7 @@ function local_campion_log($event, $detail, $email = null, $userid = null) {
  * @param  string $redirecturi Our callback URL
  * @return string
  */
-function local_campion_build_auth_url($email, $state, $redirecturi) {
-    $iam_url   = local_campion_get_iam_url();
+function local_campion_build_auth_url($email, $state, $redirecturi, array $extra = []) {
     $client_id = local_campion_get_client_id();
 
     $params = [
@@ -834,17 +841,60 @@ function local_campion_build_auth_url($email, $state, $redirecturi) {
         'state'         => $state,
     ];
 
+    // Required by Campion IAM, which rejects the request outright with
+    // {"code":400,"error":"scope must be set."} when it is absent. Configurable
+    // because the accepted set is the provider's to decide, not ours.
+    $scope = local_campion_get_oauth_scope();
+    if ($scope !== '') {
+        $params['scope'] = $scope;
+    }
+
     // Only hint at an identity when we actually have one. A login-page flow starts
-    // from an anonymous visitor, and sending an empty login_hint asks Campion to
-    // pre-fill the sign-in form with nothing, which some providers treat as an
-    // unknown user rather than as no hint at all.
+    // from an anonymous visitor, and sending an empty hint asks Campion to pre-fill
+    // its sign-in form with nothing, which some providers treat as an unknown user
+    // rather than as no hint at all.
+    //
+    // Both names are sent: login_hint is the OpenID Connect standard, and username
+    // is the parameter Campion's own authorise endpoint takes.
     if ($email !== '' && $email !== null) {
         $params['login_hint'] = $email;
+        $params['username']   = $email;
+    }
+
+    // Campion's authorise endpoint accepts acaraId and nonce. Sent only when known —
+    // an empty or guessed campus is worse than none.
+    if (!empty($extra['acaraid'])) {
+        $params['acaraId'] = $extra['acaraid'];
+    }
+    if (!empty($extra['nonce'])) {
+        $params['nonce'] = $extra['nonce'];
     }
 
     $endpoints = local_campion_discover_endpoints();
 
     return $endpoints['authorization_endpoint'] . '?' . http_build_query($params);
+}
+
+/**
+ * The OAuth scope to request at the authorisation endpoint.
+ *
+ * Campion IAM rejects an authorisation request with no scope. The default is the
+ * standard OpenID Connect set that yields an id_token carrying the identity claims
+ * this plugin reads. An administrator can override it if Campion asks for a
+ * different set, without needing a new release.
+ *
+ * An unsaved setting reads as false rather than as its declared default, so an
+ * unset value falls back to the default rather than sending nothing — sending
+ * nothing is precisely the failure this guards against.
+ *
+ * @return string
+ */
+function local_campion_get_oauth_scope() {
+    $scope = get_config('local_campion', 'oauth_scope');
+    if ($scope === false || trim((string)$scope) === '') {
+        return LOCAL_CAMPION_DEFAULT_SCOPE;
+    }
+    return trim((string)$scope);
 }
 
 /**

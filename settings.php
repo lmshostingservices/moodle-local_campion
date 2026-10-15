@@ -16,6 +16,11 @@
 
 defined('MOODLE_INTERNAL') || die();
 
+// Required for LOCAL_CAMPION_DEFAULT_SCOPE below. A local plugin's lib.php is not
+// loaded on every request, and an undefined constant here is a fatal error on the
+// settings page rather than a missing default.
+require_once($CFG->dirroot . '/local/campion/lib.php');
+
 if ($hassiteconfig) {
 
     $settings = new admin_settingpage('local_campion', get_string('pluginname', 'local_campion'));
@@ -104,6 +109,16 @@ if ($hassiteconfig) {
         get_string('sso_autocreate', 'local_campion'),
         get_string('sso_autocreate_desc', 'local_campion'),
         0
+    ));
+
+    // ── OAuth scope ──────────────────────────────────────────────────
+    // Campion IAM rejects an authorisation request that carries no scope.
+    $settings->add(new admin_setting_configtext(
+        'local_campion/oauth_scope',
+        get_string('oauth_scope', 'local_campion'),
+        get_string('oauth_scope_desc', 'local_campion'),
+        LOCAL_CAMPION_DEFAULT_SCOPE,
+        PARAM_TEXT
     ));
 
     // ── "Log in with Campion" option on the Moodle login page ────────

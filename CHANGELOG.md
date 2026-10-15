@@ -7,6 +7,58 @@ Moodle numeric version (`$plugin->version` in `version.php`), shown in parenthes
 
 ---
 
+## v1.0.23 — 2026-10-15 (2026101501)
+
+Fixes the authorisation request Campion was rejecting outright.
+
+### Fixed
+
+- **Campion IAM refused every sign-in this site started**, answering
+  `{"code":400,"error":"scope must be set."}` before the user ever saw a login form.
+  The authorisation request carried no `scope` parameter, which Campion requires. It now
+  always sends one.
+- This affected **both** outbound flows — the new login-page option and the existing
+  `launch.php` resource launch. It did not affect sign-ins that Campion itself started, which
+  is why SSO tested as working: that path never touches the authorisation endpoint.
+
+### Added
+
+- Setting **OAuth scope** (`oauth_scope`), default `openid profile email` — the standard
+  OpenID Connect set, `openid` being what makes the provider return an `id_token` carrying the
+  identity claims this plugin reads. Configurable so a change on Campion's side does not
+  require a new release. An unset value falls back to the default rather than sending nothing,
+  since sending nothing is the failure being fixed.
+- The authorisation request now also sends the parameters Campion's own endpoint declares, as
+  shown by the error's stack trace
+  (`Authenticate(responseType, clientId, scope, state, redirectUri, username, acaraId, nonce, prompt)`):
+  - `username` alongside the standard `login_hint`, both carrying the user's email;
+  - `acaraId`, taken from the user's own Campion record on `launch.php` and from the
+    site-level **Default ACARA ID** on the login-page flow — sent only when known, since a
+    guessed campus is worse than none;
+  - `nonce`, an OpenID Connect replay guard, verified against the `nonce` claim on return.
+    Checked the same defensive way as the CSRF `state`: a value that comes back *different*
+    from the one issued is refused, while an absent one falls back to the signature and expiry
+    checks already made, so a provider that does not echo it still works.
+
+- `settings.php` now requires `lib.php`. It had never needed it before; referencing the new
+  scope constant without it would have been a fatal error on the settings page.
+
+### Verified
+
+Against Moodle 4.5.15 with the mock provider changed to reject a scope-less request exactly as
+Campion does:
+
+- the pre-fix build reproduces the client's error verbatim —
+  `{"code":400,"error":"scope must be set."}` — and the fixed build completes the sign-in;
+- `launch.php` sends `scope`, `login_hint`, `username`, `acaraId` and `nonce`; the login-page
+  flow sends `scope`, `nonce` and `acaraId` when a site default is set, and no identity hint;
+- a substituted `nonce` is refused and a matching one accepted;
+- a forged `state` is still refused;
+- the settings page renders with the new field defaulted to `openid profile email`;
+- login-page button placement unchanged; provisioning API re-tested, 10/10.
+
+---
+
 ## v1.0.22 — 2026-10-14 (2026101402)
 
 Placement fix for the login-page option shipped in v1.0.21.

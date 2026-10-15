@@ -81,6 +81,11 @@ if ($wantsurl !== '') {
 $state = bin2hex(random_bytes(16));
 $SESSION->campion_oauth_state = $state;
 
+// OpenID Connect replay protection: echoed back in the id_token's nonce claim and
+// compared there. Written here with the state, before the session closes.
+$nonce = bin2hex(random_bytes(16));
+$SESSION->campion_oauth_nonce = $nonce;
+
 // Licence gate — from here on the session is closed for writing.
 if (!local_campion_check_unlock()) {
     throw new moodle_exception('notunlocked', 'local_campion');
@@ -88,9 +93,14 @@ if (!local_campion_check_unlock()) {
 
 $redirecturi = $CFG->wwwroot . '/local/campion/sso.php';
 
-// No login_hint: we do not know who this is yet. That is the difference between
-// this flow and launch.php, and Campion prompts for credentials accordingly.
-$authurl = local_campion_build_auth_url('', $state, $redirecturi);
+// No identity hint: we do not know who this is yet. That is the difference between
+// this flow and launch.php, and Campion prompts for credentials accordingly. The
+// site-level ACARA ID is sent when configured, so a single-campus site lands the
+// visitor on the right campus.
+$authurl = local_campion_build_auth_url('', $state, $redirecturi, [
+    'nonce'   => $nonce,
+    'acaraid' => local_campion_get_acara_id(),
+]);
 
 local_campion_log(
     'sso_login_start',

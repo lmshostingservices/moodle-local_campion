@@ -39,9 +39,21 @@ if (!local_campion_is_enabled()) {
 // on the next request. sso.php reads an absent state as an IAM-initiated flow and
 // skips verification, so for as long as the write happened after the gate the
 // CSRF check was never actually performed on this flow.
-global $SESSION;
+global $SESSION, $DB;
 $state = bin2hex(random_bytes(16));
 $SESSION->campion_oauth_state = $state;
+
+// OpenID Connect replay protection: echoed back in the id_token's nonce claim and
+// compared there. Written here with the state, before the session closes.
+$nonce = bin2hex(random_bytes(16));
+$SESSION->campion_oauth_nonce = $nonce;
+
+// This user's own campus, falling back to the site default. Read before the
+// licence gate, which closes the session and makes further writes unsafe.
+$campionuser = $DB->get_record('local_campion_users', ['email' => $USER->email], 'id, acaraid');
+$acaraid     = ($campionuser && !empty($campionuser->acaraid))
+    ? $campionuser->acaraid
+    : local_campion_get_acara_id();
 
 // Licence gate — from here on the session is closed for writing.
 if (!local_campion_check_unlock()) {
@@ -49,7 +61,10 @@ if (!local_campion_check_unlock()) {
 }
 
 $redirect_uri = $CFG->wwwroot . '/local/campion/sso.php';
-$auth_url     = local_campion_build_auth_url($USER->email, $state, $redirect_uri);
+$auth_url     = local_campion_build_auth_url($USER->email, $state, $redirect_uri, [
+    'nonce'   => $nonce,
+    'acaraid' => $acaraid,
+]);
 
 local_campion_log(
     'sso_launch',

@@ -147,6 +147,22 @@ if ($payload === false) {
     }
 }
 
+// ── Verify the OpenID Connect nonce ───────────────────────────────
+// Checked the same way as the CSRF state: only when both sides have one. We send a
+// nonce on every flow we start, but a provider is not obliged to echo it, and a
+// Campion-initiated launch has no prior session value at all. A nonce that comes
+// back *different* from the one we issued is a replayed or substituted token and is
+// refused; an absent one falls back to the signature and expiry checks already made.
+if (!empty($SESSION->campion_oauth_nonce)) {
+    $expectednonce = $SESSION->campion_oauth_nonce;
+    unset($SESSION->campion_oauth_nonce); // Single use, whether or not it matches.
+
+    if (!empty($payload['nonce']) && !hash_equals($expectednonce, (string)$payload['nonce'])) {
+        local_campion_log('sso_error', 'OIDC nonce mismatch — possible token replay, login refused');
+        throw new moodle_exception('sso_nonce_mismatch', 'local_campion');
+    }
+}
+
 // ── Extract user info ─────────────────────────────────────────────
 $email       = local_campion_email_from_claims($payload);
 $resource_id = isset($payload['resource_id']) ? $payload['resource_id'] : '';
